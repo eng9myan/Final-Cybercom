@@ -18,6 +18,8 @@ class Queue(BaseModel):
 
 
 class QueueEntry(BaseModel):
+    data_classification = "phi"
+
     queue = models.ForeignKey(Queue, on_delete=models.CASCADE, related_name="entries")
     ticket = models.ForeignKey(
         PatientQueueTicket, on_delete=models.CASCADE, related_name="queue_entries"

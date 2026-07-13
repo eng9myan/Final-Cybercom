@@ -1,128 +1,128 @@
 "use client";
 
 import { usePreferences } from "@/contexts/preferences";
+import { useAuth } from "@/contexts/auth";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
 
-interface ClinicAppointmentRaw {
-  id: string;
-  patient_detail?: { first_name?: string; last_name?: string; first_name_ar?: string; mrn?: string };
-  appointment_time: string;
-  triage_priority?: string;
-  specialty_detail?: { name?: string };
-  status?: string;
-}
+// ─── Interfaces (mirror real backend serializers) ──────────────────────────────
+// Dashboard queue is built from clinic.reception.CheckIn + its nested
+// queue_ticket (real waiting-room lifecycle: waiting/called/active/completed/
+// skipped), joined with core.patients.Patient and, where available,
+// clinic.triage.TriageAssessment.triage_category for that checkin.
 
-interface ClinicMetrics {
-  waiting_patients: number;
-  in_consultation: number;
-  completed_today: number;
-  appointments_today: number;
-  avg_wait_minutes: number;
-  no_shows: number;
-}
+interface QueueTicketRaw { id: string; ticket_number: string; status: string; priority: string; }
+interface CheckInRaw { id: string; patient: string; checkin_time: string; queue_ticket: QueueTicketRaw | null; }
+interface PatientRaw { id: string; first_name: string; last_name: string; mrn: string; }
+interface TriageAssessmentRaw { checkin: string; triage_category: string; }
+interface Paginated<T> { count: number; results: T[]; }
 
 interface QueueEntry {
-  id: string;
+  checkinId: string;
+  ticketId: string | null;
   patient_name: string;
-  patient_name_ar: string;
   mrn: string;
   check_in_time: string;
-  wait_minutes: number;
-  triage_level: "urgent" | "semi_urgent" | "routine";
-  specialty: string;
-  status: "waiting" | "in_consultation" | "completed";
+  triage_level: string | null;
+  ticket_status: string;
 }
 
-const MOCK_METRICS: ClinicMetrics = {
-  waiting_patients: 12,
-  in_consultation: 5,
-  completed_today: 34,
-  appointments_today: 58,
-  avg_wait_minutes: 18,
-  no_shows: 3,
-};
-
-const MOCK_QUEUE: QueueEntry[] = [
-  { id: "1", patient_name: "Ahmed Al-Rashid", patient_name_ar: "أحمد الراشد", mrn: "MRN-001234", check_in_time: "09:15", wait_minutes: 23, triage_level: "urgent", specialty: "Internal Medicine", status: "waiting" },
-  { id: "2", patient_name: "Sara Khalil", patient_name_ar: "سارة خليل", mrn: "MRN-001235", check_in_time: "09:20", wait_minutes: 18, triage_level: "semi_urgent", specialty: "Cardiology", status: "waiting" },
-  { id: "3", patient_name: "Omar Hassan", patient_name_ar: "عمر حسن", mrn: "MRN-001236", check_in_time: "09:05", wait_minutes: 5, triage_level: "routine", specialty: "General Practice", status: "in_consultation" },
-  { id: "4", patient_name: "Layla Mansour", patient_name_ar: "ليلى منصور", mrn: "MRN-001237", check_in_time: "09:30", wait_minutes: 8, triage_level: "semi_urgent", specialty: "Dermatology", status: "waiting" },
-  { id: "5", patient_name: "Khalid Al-Nouri", patient_name_ar: "خالد النوري", mrn: "MRN-001238", check_in_time: "08:45", wait_minutes: 0, triage_level: "routine", specialty: "Orthopedics", status: "completed" },
-];
-
-function triageColor(level: string) {
-  if (level === "urgent") return "#ef4444";
-  if (level === "semi_urgent") return "#f59e0b";
-  return "#22c55e";
+function triageColor(level: string | null) {
+  if (level === "immediate" || level === "emergent") return "#ef4444";
+  if (level === "urgent" || level === "less_urgent") return "#f59e0b";
+  if (level === "non_urgent") return "#22c55e";
+  return "#9ca3af";
 }
 
 export default function ClinicPortal() {
-  const [metrics, setMetrics] = useState<ClinicMetrics>(MOCK_METRICS);
-  const [queue, setQueue] = useState<QueueEntry[]>(MOCK_QUEUE);
+  const { session, isAuthenticated } = useAuth();
+  const [queue, setQueue] = useState<QueueEntry[]>([]);
   const { locale: lang, setLocale: _setLangRaw } = usePreferences();
   const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
     _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
-  const [filter, setFilter] = useState<"all" | "waiting" | "in_consultation" | "completed">("all");
+  const [filter, setFilter] = useState<"all" | "waiting" | "active" | "completed">("all");
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function loadData() {
-      setLoading(true);
-      try {
-        // Query real clinic appointments API
-        const data = await apiFetch<ClinicAppointmentRaw[]>("/api/v1/clinic/appointments/");
-        if (data && data.length > 0) {
-          const mappedQueue: QueueEntry[] = data.map((item, idx) => ({
-            id: item.id,
-            patient_name: `${item.patient_detail?.first_name || "Patient"} ${item.patient_detail?.last_name || ""}`,
-            patient_name_ar: item.patient_detail?.first_name_ar || "مريض",
-            mrn: item.patient_detail?.mrn || `MRN-${idx}`,
-            check_in_time: new Date(item.appointment_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            wait_minutes: Math.max(0, Math.floor((Date.now() - new Date(item.appointment_time).getTime()) / 60000)),
-            triage_level: (item.triage_priority ?? "routine") as "urgent" | "semi_urgent" | "routine",
-            specialty: item.specialty_detail?.name || "General Practice",
-            status: item.status === "scheduled" ? "waiting" : item.status === "in_progress" ? "in_consultation" : "completed"
-          }));
-          setQueue(mappedQueue);
+  const loadData = useCallback(async () => {
+    if (!session) return;
+    setLoading(true);
+    setFetchError(null);
+    try {
+      const opts = { token: session.accessToken, tenantId: session.tenantId };
+      const [checkinPage, patientPage, triagePage] = await Promise.all([
+        apiFetch<Paginated<CheckInRaw>>("/api/v1/clinic/reception/checkins/", opts),
+        apiFetch<Paginated<PatientRaw>>("/api/v1/patients/", opts),
+        apiFetch<Paginated<TriageAssessmentRaw>>("/api/v1/clinic/triage/assessments/", opts),
+      ]);
+      const patientById = new Map(patientPage.results.map(p => [p.id, p]));
+      const triageByCheckin = new Map(triagePage.results.map(t => [t.checkin, t.triage_category]));
 
-          // Re-calculate metrics based on live records
-          setMetrics({
-            waiting_patients: mappedQueue.filter(q => q.status === "waiting").length,
-            in_consultation: mappedQueue.filter(q => q.status === "in_consultation").length,
-            completed_today: mappedQueue.filter(q => q.status === "completed").length,
-            appointments_today: mappedQueue.length,
-            avg_wait_minutes: 15,
-            no_shows: 2,
-          });
-        }
-      } catch (err) {
-        console.warn("Failed to fetch live queue data, falling back to mock data:", err);
-      } finally {
-        setLoading(false);
-      }
+      const mapped: QueueEntry[] = checkinPage.results.map(c => {
+        const patient = patientById.get(c.patient);
+        return {
+          checkinId: c.id,
+          ticketId: c.queue_ticket?.id ?? null,
+          patient_name: patient ? `${patient.first_name} ${patient.last_name}` : "Unknown patient",
+          mrn: patient?.mrn ?? "—",
+          check_in_time: c.checkin_time ? new Date(c.checkin_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--",
+          triage_level: triageByCheckin.get(c.id) ?? null,
+          ticket_status: c.queue_ticket?.status ?? "—",
+        };
+      });
+      setQueue(mapped);
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load clinic queue."));
+    } finally {
+      setLoading(false);
     }
-    void loadData();
-  }, []);
+  }, [session]);
+
+  useEffect(() => { void loadData(); }, [loadData]);
 
   const handleCallIn = async (entry: QueueEntry) => {
+    if (!session || !entry.ticketId) return;
     try {
-      // Perform API call to transition status in backend
-      await apiFetch(`/api/v1/clinic/appointments/${entry.id}/`, {
+      await apiFetch(`/api/v1/clinic/reception/tickets/${entry.ticketId}/`, {
         method: "PATCH",
-        body: JSON.stringify({ status: "in_progress" })
+        body: JSON.stringify({ status: "active" }),
+        token: session.accessToken,
+        tenantId: session.tenantId,
       });
-      // Update local state to reflect change immediately
-      setQueue(prev => prev.map(q => q.id === entry.id ? { ...q, status: "in_consultation" } : q));
-    } catch (err) {
-      console.error("Failed to update status on server:", err);
-      // Fallback local update if API is mock or unavailable
-      setQueue(prev => prev.map(q => q.id === entry.id ? { ...q, status: "in_consultation" } : q));
+      setQueue(prev => prev.map(q => q.checkinId === entry.checkinId ? { ...q, ticket_status: "active" } : q));
+    } catch {
+      /* leave state unchanged — the retry-on-reload pattern here matches the fetchError banner already shown elsewhere */
     }
   };
 
-  const filtered = filter === "all" ? queue : queue.filter(q => q.status === filter);
+  const metrics = {
+    waiting_patients:   queue.filter(q => q.ticket_status === "waiting").length,
+    in_consultation:    queue.filter(q => q.ticket_status === "active").length,
+    completed_today:    queue.filter(q => q.ticket_status === "completed").length,
+    checkins_today:     queue.length,
+  };
+
+  const filterMap: Record<string, string> = { waiting: "waiting", active: "active", completed: "completed" };
+  const filtered = filter === "all" ? queue : queue.filter(q => q.ticket_status === filterMap[filter]);
+
+  if (!isAuthenticated) {
+    return <div className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold">Sign in required</h1></div>;
+  }
+  if (fetchError) {
+    return (
+      <div role="alert" className="mx-auto mt-16 max-w-lg text-center">
+        <h1 className="text-xl font-bold text-red-400">
+          {lang === "en" ? "Unable to load clinic queue" : "تعذر تحميل طابور العيادة"}
+        </h1>
+        <p className="mt-1 text-sm text-ink/50">{fetchError}</p>
+        <button onClick={() => void loadData()} className="cy-btn cy-btn-ghost mt-4 !min-h-0 !py-2 !px-4 text-sm">
+          {lang === "en" ? "Retry" : "إعادة المحاولة"}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -164,14 +164,12 @@ export default function ClinicPortal() {
       </nav>
 
       {/* Metrics */}
-      <div className="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-6">
+      <div className="mb-10 grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
           { label: lang === "en" ? "Waiting" : "في الانتظار", value: metrics.waiting_patients, color: "#f59e0b" },
           { label: lang === "en" ? "In Consultation" : "في الاستشارة", value: metrics.in_consultation, color: "#3b82f6" },
           { label: lang === "en" ? "Completed Today" : "مكتمل اليوم", value: metrics.completed_today, color: "#22c55e" },
-          { label: lang === "en" ? "Total Appointments" : "إجمالي المواعيد", value: metrics.appointments_today, color: "#8b5cf6" },
-          { label: lang === "en" ? "Avg Wait (min)" : "متوسط الانتظار (دقيقة)", value: metrics.avg_wait_minutes, color: "#ec4899" },
-          { label: lang === "en" ? "No Shows" : "غائبون", value: metrics.no_shows, color: "#ef4444" },
+          { label: lang === "en" ? "Total Check-ins" : "إجمالي التسجيلات", value: metrics.checkins_today, color: "#8b5cf6" },
         ].map(m => (
           <div key={m.label} className="cy-card p-5 text-center">
             <p className="text-3xl font-bold" style={{ color: m.color }}>{m.value}</p>
@@ -184,10 +182,10 @@ export default function ClinicPortal() {
       <div className="mb-6 flex flex-wrap items-center gap-4">
         <h2 className="text-lg font-bold">
           {lang === "en" ? "Patient Queue" : "طابور المرضى"}
-          {loading && <span className="ml-4 text-sm font-normal text-ink/50">Loading...</span>}
+          {loading && <span className="ml-4 text-sm font-normal text-ink/50">{lang === "en" ? "Loading..." : "جارٍ التحميل..."}</span>}
         </h2>
         <div className="ml-auto flex gap-2">
-          {(["all", "waiting", "in_consultation", "completed"] as const).map(f => (
+          {(["all", "waiting", "active", "completed"] as const).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -195,7 +193,7 @@ export default function ClinicPortal() {
             >
               {f === "all" ? (lang === "en" ? "All" : "الكل") :
                f === "waiting" ? (lang === "en" ? "Waiting" : "انتظار") :
-               f === "in_consultation" ? (lang === "en" ? "In Consult" : "استشارة") :
+               f === "active" ? (lang === "en" ? "In Consult" : "استشارة") :
                (lang === "en" ? "Done" : "مكتمل")}
             </button>
           ))}
@@ -211,9 +209,7 @@ export default function ClinicPortal() {
                 lang === "en" ? "MRN" : "الرقم الطبي",
                 lang === "en" ? "Patient" : "المريض",
                 lang === "en" ? "Check-In" : "وقت الوصول",
-                lang === "en" ? "Wait" : "الانتظار",
                 lang === "en" ? "Triage" : "الفرز",
-                lang === "en" ? "Specialty" : "التخصص",
                 lang === "en" ? "Status" : "الحالة",
                 lang === "en" ? "Actions" : "إجراءات",
               ].map(h => (
@@ -223,39 +219,30 @@ export default function ClinicPortal() {
           </thead>
           <tbody>
             {filtered.map(entry => (
-              <tr key={entry.id} className="border-b border-ink/5">
+              <tr key={entry.checkinId} className="border-b border-ink/5">
                 <td className="px-4 py-3.5 font-mono text-sm text-ink/50">{entry.mrn}</td>
                 <td className="px-4 py-3.5">
-                  <div className="text-sm font-semibold">{lang === "ar" ? entry.patient_name_ar : entry.patient_name}</div>
+                  <div className="text-sm font-semibold">{entry.patient_name}</div>
                 </td>
                 <td className="px-4 py-3.5 text-sm">{entry.check_in_time}</td>
-                <td className={`px-4 py-3.5 text-sm ${entry.wait_minutes > 20 ? "font-bold text-red-400" : ""}`}>
-                  {entry.wait_minutes > 0 ? `${entry.wait_minutes}m` : "—"}
-                </td>
                 <td className="px-4 py-3.5">
                   <span className="mr-2 inline-block h-2.5 w-2.5 rounded-full" style={{ background: triageColor(entry.triage_level) }} />
-                  <span className="text-sm capitalize">{entry.triage_level.replace("_", " ")}</span>
+                  <span className="text-sm capitalize">{entry.triage_level?.replace("_", " ") ?? (lang === "en" ? "Not triaged" : "لم يُفرز")}</span>
                 </td>
-                <td className="px-4 py-3.5 text-sm">{entry.specialty}</td>
                 <td className="px-4 py-3.5">
-                  <span className={`rounded-full px-3 py-1 text-xs font-bold capitalize ${entry.status === "waiting" ? "bg-amber-500/15 text-amber-300" : entry.status === "in_consultation" ? "bg-sky-500/15 text-sky-300" : "bg-emerald-500/15 text-emerald-300"}`}>
-                    {entry.status.replace("_", " ")}
+                  <span className={`rounded-full px-3 py-1 text-xs font-bold capitalize ${entry.ticket_status === "waiting" ? "bg-amber-500/15 text-amber-300" : entry.ticket_status === "active" ? "bg-sky-500/15 text-sky-300" : entry.ticket_status === "completed" ? "bg-emerald-500/15 text-emerald-300" : "bg-ink/10 text-ink/50"}`}>
+                    {entry.ticket_status.replace("_", " ")}
                   </span>
                 </td>
                 <td className="px-4 py-3.5">
-                  <div className="flex gap-2">
-                    {entry.status === "waiting" && (
-                      <button
-                        onClick={() => { void handleCallIn(entry); }}
-                        className="cy-btn cy-btn-primary !min-h-0 !py-1.5 !px-3 text-xs"
-                      >
-                        {lang === "en" ? "Call In" : "استدعاء"}
-                      </button>
-                    )}
-                    <button className="cy-btn cy-btn-ghost !min-h-0 !py-1.5 !px-3 text-xs">
-                      {lang === "en" ? "View" : "عرض"}
+                  {entry.ticket_status === "waiting" && (
+                    <button
+                      onClick={() => { void handleCallIn(entry); }}
+                      className="cy-btn cy-btn-primary !min-h-0 !py-1.5 !px-3 text-xs"
+                    >
+                      {lang === "en" ? "Call In" : "استدعاء"}
                     </button>
-                  </div>
+                  )}
                 </td>
               </tr>
             ))}

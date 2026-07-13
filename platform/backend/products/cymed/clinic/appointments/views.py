@@ -14,10 +14,18 @@ from products.cymed.clinic.appointments.serializers import (
 )
 from products.cymed.clinic.views import ClinicModelViewSet
 
+CLINIC_STAFF_ROLES = {"physician", "nurse", "receptionist"}
+
 
 class ClinicAppointmentViewSet(ClinicModelViewSet):
     queryset = ClinicAppointment.objects.all()
     serializer_class = ClinicAppointmentSerializer
+    action_required_roles = {
+        "create": CLINIC_STAFF_ROLES,
+        "update": CLINIC_STAFF_ROLES,
+        "partial_update": CLINIC_STAFF_ROLES,
+        "destroy": CLINIC_STAFF_ROLES,
+    }
 
 
 class AppointmentReminderViewSet(ClinicModelViewSet):

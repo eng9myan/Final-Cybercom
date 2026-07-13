@@ -39,6 +39,8 @@ class VisitStatus(BaseModel):
 
 
 class CheckIn(BaseModel):
+    data_classification = "phi"
+
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="clinic_checkins")
     appointment = models.ForeignKey(
         Appointment,
@@ -57,6 +59,8 @@ class CheckIn(BaseModel):
 
 
 class CheckOut(BaseModel):
+    data_classification = "phi"
+
     checkin = models.OneToOneField(CheckIn, on_delete=models.CASCADE, related_name="checkout")
     checkout_time = models.DateTimeField(auto_now_add=True)
     status = models.CharField(max_length=50, default="completed")
@@ -66,6 +70,8 @@ class CheckOut(BaseModel):
 
 
 class PatientQueueTicket(BaseModel):
+    data_classification = "phi"
+
     checkin = models.OneToOneField(CheckIn, on_delete=models.CASCADE, related_name="queue_ticket")
     ticket_number = models.CharField(max_length=50)
     status = models.CharField(

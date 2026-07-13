@@ -1,53 +1,146 @@
 "use client";
 
 import { usePreferences } from "@/contexts/preferences";
-import { useState, useEffect } from "react";
+import { useAuth } from "@/contexts/auth";
+import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
 
-interface Session { id: string; patient: string; patient_ar: string; mrn: string; provider: string; specialty: string; platform: "video" | "phone" | "chat"; status: "pending" | "in_progress" | "completed" | "cancelled"; scheduled_at: string; duration_min: number | null; }
-const MOCK: Session[] = [
-  { id: "tm-001", patient: "Fatima Al-Harbi", patient_ar: "فاطمة الحربي", mrn: "MRN-002145", provider: "Dr. Sarah Johnson", specialty: "Internal Medicine", platform: "video", status: "in_progress", scheduled_at: "09:00 AM", duration_min: 18 },
-  { id: "tm-002", patient: "Yousef Al-Otaibi", patient_ar: "يوسف العتيبي", mrn: "MRN-002146", provider: "Dr. Ahmed Al-Rashid", specialty: "Cardiology", platform: "video", status: "pending", scheduled_at: "09:30 AM", duration_min: null },
-  { id: "tm-003", patient: "Mariam Al-Ghamdi", patient_ar: "مريم الغامدي", mrn: "MRN-002147", provider: "Dr. Khalid Al-Nouri", specialty: "Endocrinology", platform: "phone", status: "completed", scheduled_at: "08:00 AM", duration_min: 12 },
-  { id: "tm-004", patient: "Ibrahim Al-Harthy", patient_ar: "إبراهيم الحارثي", mrn: "MRN-002148", provider: "Dr. Laila Mahmoud", specialty: "Dermatology", platform: "chat", status: "pending", scheduled_at: "10:00 AM", duration_min: null },
-  { id: "tm-005", patient: "Nora Al-Qahtani", patient_ar: "نورة القحطاني", mrn: "MRN-002149", provider: "Dr. Sarah Johnson", specialty: "Internal Medicine", platform: "video", status: "pending", scheduled_at: "10:30 AM", duration_min: null },
-  { id: "tm-006", patient: "Tariq Al-Shammari", patient_ar: "طارق الشمري", mrn: "MRN-002150", provider: "Dr. Omar Hassan", specialty: "Orthopedics", platform: "video", status: "cancelled", scheduled_at: "08:30 AM", duration_min: null },
-  { id: "tm-007", patient: "Hessa Al-Mutairi", patient_ar: "حصة المطيري", mrn: "MRN-002151", provider: "Dr. Faisal Al-Anzi", specialty: "Pulmonology", platform: "video", status: "completed", scheduled_at: "07:30 AM", duration_min: 22 },
-  { id: "tm-008", patient: "Badr Al-Rashidi", patient_ar: "بدر الرشيدي", mrn: "MRN-002152", provider: "Dr. Ahmed Al-Rashid", specialty: "Cardiology", platform: "phone", status: "pending", scheduled_at: "11:00 AM", duration_min: null },
-];
-const STATUS_COLOR: Record<string, string> = { pending: "#f59e0b", in_progress: "#22c55e", completed: "#22D3EE", cancelled: "#6b7280" };
-const PLATFORM_ICON: Record<string, string> = { video: "🎥", phone: "📞", chat: "💬" };
+// ─── Interfaces (mirror real backend serializers) ──────────────────────────────
+// clinic.telemedicine.VirtualVisitSerializer: id, patient, provider_id,
+// scheduled_start, status (scheduled/in_progress/completed/cancelled),
+// session{session_token, connection_url, started_at, ended_at}. No platform
+// (video/phone/chat) or specialty fields exist on the backend.
+
+interface SessionInfo { session_token: string; connection_url: string; started_at: string | null; ended_at: string | null; }
+interface VisitRaw { id: string; patient: string; provider_id: string; scheduled_start: string; status: "scheduled" | "in_progress" | "completed" | "cancelled"; session: SessionInfo | null; }
+interface PatientRaw { id: string; first_name: string; last_name: string; mrn: string; }
+interface ProviderRaw { id: string; first_name: string; last_name: string; }
+interface Paginated<T> { count: number; results: T[]; }
+
+interface Row {
+  id: string;
+  patient_name: string;
+  mrn: string;
+  provider: string;
+  scheduled_at: string;
+  status: VisitRaw["status"];
+  connection_url: string | null;
+}
+
+const STATUS_COLOR: Record<string, string> = { scheduled: "#f59e0b", in_progress: "#22c55e", completed: "#22D3EE", cancelled: "#6b7280" };
 
 export default function TelemedicinePage() {
+  const { session, isAuthenticated } = useAuth();
   const { locale: lang, setLocale: _setLangRaw } = usePreferences();
   const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
     _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
-  const [sessions, setSessions] = useState<Session[]>(MOCK);
+  const [rows, setRows] = useState<Row[]>([]);
   const [filter, setFilter] = useState<string>("all");
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState("");
   const isAr = lang === "ar";
 
-  useEffect(() => {
+  const loadData = useCallback(async () => {
+    if (!session) return;
     setLoading(true);
-    apiFetch<Session[]>("/api/v1/clinic/telemedicine/sessions/").then(d => { if (d && d.length) setSessions(d); }).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+    setFetchError(null);
+    try {
+      const opts = { token: session.accessToken, tenantId: session.tenantId };
+      const [visitPage, patientPage, providerPage] = await Promise.all([
+        apiFetch<Paginated<VisitRaw>>("/api/v1/clinic/telemedicine/visits/", opts),
+        apiFetch<Paginated<PatientRaw>>("/api/v1/patients/", opts),
+        apiFetch<Paginated<ProviderRaw>>("/api/v1/providers/", opts),
+      ]);
+      const patientById = new Map(patientPage.results.map(p => [p.id, p]));
+      const providerById = new Map(providerPage.results.map(p => [p.id, p]));
+      const mapped: Row[] = visitPage.results.map(v => {
+        const patient = patientById.get(v.patient);
+        const provider = providerById.get(v.provider_id);
+        return {
+          id: v.id,
+          patient_name: patient ? `${patient.first_name} ${patient.last_name}` : "Unknown patient",
+          mrn: patient?.mrn ?? "—",
+          provider: provider ? `Dr. ${provider.first_name} ${provider.last_name}` : "Unassigned",
+          scheduled_at: new Date(v.scheduled_start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          status: v.status,
+          connection_url: v.session?.connection_url ?? null,
+        };
+      });
+      setRows(mapped);
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load telemedicine visits."));
+    } finally {
+      setLoading(false);
+    }
+  }, [session]);
 
-  const handleAction = async (id: string, action: "join" | "end" | "cancel") => {
-    const next = { join: "in_progress" as const, end: "completed" as const, cancel: "cancelled" as const };
-    try { await apiFetch(`/api/v1/clinic/telemedicine/sessions/${id}/`, { method: "PATCH", body: JSON.stringify({ status: next[action] }) }); } catch {}
-    setSessions(prev => prev.map(s => s.id === id ? { ...s, status: next[action] } : s));
+  useEffect(() => { void loadData(); }, [loadData]);
+
+  const handleJoin = async (id: string) => {
+    if (!session) return;
+    try {
+      await apiFetch(`/api/v1/clinic/telemedicine/visits/${id}/start_session/`, {
+        method: "POST",
+        token: session.accessToken,
+        tenantId: session.tenantId,
+      });
+      setRows(prev => prev.map(r => r.id === id ? { ...r, status: "in_progress" } : r));
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setActionMsg(detail || (isAr ? "فشل الانضمام." : "Failed to join."));
+      setTimeout(() => setActionMsg(""), 3000);
+    }
   };
 
-  const counts = { pending: sessions.filter(s => s.status === "pending").length, in_progress: sessions.filter(s => s.status === "in_progress").length, completed: sessions.filter(s => s.status === "completed").length, cancelled: sessions.filter(s => s.status === "cancelled").length };
-  const filtered = filter === "all" ? sessions : sessions.filter(s => s.status === filter);
+  const handleUpdateStatus = async (id: string, status: "completed" | "cancelled") => {
+    if (!session) return;
+    try {
+      await apiFetch(`/api/v1/clinic/telemedicine/visits/${id}/`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+        token: session.accessToken,
+        tenantId: session.tenantId,
+      });
+      setRows(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setActionMsg(detail || (isAr ? "فشل الإجراء." : "Action failed."));
+      setTimeout(() => setActionMsg(""), 3000);
+    }
+  };
+
+  const counts = {
+    scheduled:   rows.filter(r => r.status === "scheduled").length,
+    in_progress: rows.filter(r => r.status === "in_progress").length,
+    completed:   rows.filter(r => r.status === "completed").length,
+    cancelled:   rows.filter(r => r.status === "cancelled").length,
+  };
+  const filtered = filter === "all" ? rows : rows.filter(r => r.status === filter);
   const dir = isAr ? "rtl" : "ltr";
+
+  if (!isAuthenticated) {
+    return <div className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold">Sign in required</h1></div>;
+  }
+  if (fetchError) {
+    return (
+      <div role="alert" className="mx-auto mt-16 max-w-lg text-center">
+        <h1 className="text-xl font-bold text-red-400">{isAr ? "تعذر تحميل جلسات التطبيب عن بُعد" : "Unable to load telemedicine visits"}</h1>
+        <p className="mt-1 text-sm text-ink/50">{fetchError}</p>
+        <button onClick={() => void loadData()} className="cy-btn cy-btn-ghost mt-4 !min-h-0 !py-2 !px-4 text-sm">
+          {isAr ? "إعادة المحاولة" : "Retry"}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div dir={dir} className="mx-auto max-w-6xl">
       <header className="mb-6 flex items-center justify-between border-b-2 border-brand-400/30 pb-4">
         <div>
-          <h1 className="font-heading text-2xl font-bold text-brand-400">{isAr ? "التطبيب عن بُعد" : "Telemedicine Sessions"}</h1>
-          <p className="mt-1 text-sm text-ink/50">{isAr ? "جلسات الطب عن بُعد عبر الفيديو والهاتف والدردشة" : "Virtual consultations via video, phone & chat"}</p>
+          <h1 className="font-heading text-2xl font-bold text-brand-400">{isAr ? "التطبيب عن بُعد" : "Telemedicine Visits"}</h1>
+          <p className="mt-1 text-sm text-ink/50">{isAr ? "جلسات التطبيب عن بُعد" : "Virtual patient visits"}</p>
         </div>
         <div className="flex items-center gap-3">
           {loading && <span className="text-xs text-ink/50">●</span>}
@@ -57,9 +150,16 @@ export default function TelemedicinePage() {
       <nav className="mb-6 flex flex-wrap gap-2">
         <a href="/clinic" className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm no-underline">{isAr ? "← الرجوع للعيادة" : "← Back to Clinic"}</a>
       </nav>
+
+      {actionMsg && (
+        <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-5 py-3 text-sm font-semibold text-red-400">
+          {actionMsg}
+        </div>
+      )}
+
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          { label: isAr ? "في الانتظار" : "Pending", value: counts.pending, color: "#f59e0b" },
+          { label: isAr ? "مجدولة" : "Scheduled", value: counts.scheduled, color: "#f59e0b" },
           { label: isAr ? "جارية" : "In Progress", value: counts.in_progress, color: "#22c55e" },
           { label: isAr ? "مكتملة" : "Completed", value: counts.completed, color: "#22D3EE" },
           { label: isAr ? "ملغاة" : "Cancelled", value: counts.cancelled, color: "#6b7280" },
@@ -71,7 +171,7 @@ export default function TelemedicinePage() {
         ))}
       </div>
       <div className="mb-5 flex flex-wrap gap-2">
-        {["all", "pending", "in_progress", "completed", "cancelled"].map(f => (
+        {["all", "scheduled", "in_progress", "completed", "cancelled"].map(f => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -88,8 +188,6 @@ export default function TelemedicinePage() {
               {[
                 isAr ? "المريض" : "Patient",
                 isAr ? "الطبيب" : "Provider",
-                isAr ? "التخصص" : "Specialty",
-                isAr ? "المنصة" : "Platform",
                 isAr ? "الوقت" : "Time",
                 isAr ? "الحالة" : "Status",
                 isAr ? "إجراء" : "Action",
@@ -99,35 +197,38 @@ export default function TelemedicinePage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(sess => (
-              <tr key={sess.id} className="border-b border-ink/5">
+            {filtered.map(row => (
+              <tr key={row.id} className="border-b border-ink/5">
                 <td className="px-4 py-3 text-sm">
-                  <div className="font-semibold">{isAr ? sess.patient_ar : sess.patient}</div>
-                  <div className="text-xs text-ink/50">{sess.mrn}</div>
+                  <div className="font-semibold">{row.patient_name}</div>
+                  <div className="text-xs text-ink/50">{row.mrn}</div>
                 </td>
-                <td className="px-4 py-3 text-sm">{sess.provider}</td>
-                <td className="px-4 py-3 text-sm">{sess.specialty}</td>
-                <td className="px-4 py-3 text-sm">{PLATFORM_ICON[sess.platform]} {sess.platform}</td>
-                <td className="px-4 py-3 text-sm">{sess.scheduled_at}{sess.duration_min ? ` (${sess.duration_min}m)` : ""}</td>
+                <td className="px-4 py-3 text-sm">{row.provider}</td>
+                <td className="px-4 py-3 text-sm">{row.scheduled_at}</td>
                 <td className="px-4 py-3">
-                  <span className="rounded px-2 py-0.5 text-xs font-semibold" style={{ background: `${STATUS_COLOR[sess.status]}22`, color: STATUS_COLOR[sess.status], border: `1px solid ${STATUS_COLOR[sess.status]}55` }}>
-                    {sess.status.replace("_", " ")}
+                  <span className="rounded px-2 py-0.5 text-xs font-semibold" style={{ background: `${STATUS_COLOR[row.status]}22`, color: STATUS_COLOR[row.status], border: `1px solid ${STATUS_COLOR[row.status]}55` }}>
+                    {row.status.replace("_", " ")}
                   </span>
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex gap-1.5">
-                    {sess.status === "pending" && (
-                      <button onClick={() => handleAction(sess.id, "join")} className="rounded px-2.5 py-1 text-xs font-semibold" style={{ background: "#22c55e22", color: "#22c55e", border: "1px solid #22c55e55" }}>
+                    {row.status === "scheduled" && (
+                      <button onClick={() => { void handleJoin(row.id); }} className="rounded px-2.5 py-1 text-xs font-semibold" style={{ background: "#22c55e22", color: "#22c55e", border: "1px solid #22c55e55" }}>
                         {isAr ? "انضمام" : "Join"}
                       </button>
                     )}
-                    {sess.status === "in_progress" && (
-                      <button onClick={() => handleAction(sess.id, "end")} className="rounded px-2.5 py-1 text-xs font-semibold" style={{ background: "#22D3EE22", color: "#22D3EE", border: "1px solid #22D3EE55" }}>
+                    {row.status === "in_progress" && row.connection_url && (
+                      <a href={row.connection_url} target="_blank" rel="noreferrer" className="rounded px-2.5 py-1 text-xs font-semibold no-underline" style={{ background: "#22D3EE22", color: "#22D3EE", border: "1px solid #22D3EE55" }}>
+                        {isAr ? "فتح الجلسة" : "Open Session"}
+                      </a>
+                    )}
+                    {row.status === "in_progress" && (
+                      <button onClick={() => { void handleUpdateStatus(row.id, "completed"); }} className="rounded px-2.5 py-1 text-xs font-semibold" style={{ background: "transparent", color: "#22D3EE", border: "1px solid #22D3EE55" }}>
                         {isAr ? "إنهاء" : "End"}
                       </button>
                     )}
-                    {sess.status === "pending" && (
-                      <button onClick={() => handleAction(sess.id, "cancel")} className="rounded px-2.5 py-1 text-xs" style={{ background: "transparent", color: "#6b7280", border: "1px solid #6b728055" }}>
+                    {row.status === "scheduled" && (
+                      <button onClick={() => { void handleUpdateStatus(row.id, "cancelled"); }} className="rounded px-2.5 py-1 text-xs" style={{ background: "transparent", color: "#6b7280", border: "1px solid #6b728055" }}>
                         {isAr ? "إلغاء" : "Cancel"}
                       </button>
                     )}
@@ -135,6 +236,9 @@ export default function TelemedicinePage() {
                 </td>
               </tr>
             ))}
+            {filtered.length === 0 && (
+              <tr><td colSpan={5} className="p-10 text-center text-sm text-ink/40">{isAr ? "لا توجد جلسات." : "No visits."}</td></tr>
+            )}
           </tbody>
         </table>
       </div>

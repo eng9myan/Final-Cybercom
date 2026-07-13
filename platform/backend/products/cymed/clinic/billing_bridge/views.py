@@ -12,6 +12,8 @@ from products.cymed.clinic.billing_bridge.serializers import (
 )
 from products.cymed.clinic.views import ClinicModelViewSet
 
+BILLING_STAFF_ROLES = {"physician", "nurse", "receptionist"}
+
 
 class ChargeCodeViewSet(ClinicModelViewSet):
     queryset = ChargeCode.objects.all()
@@ -31,3 +33,9 @@ class ClinicServiceViewSet(ClinicModelViewSet):
 class ChargeItemViewSet(ClinicModelViewSet):
     queryset = ChargeItem.objects.all()
     serializer_class = ChargeItemSerializer
+    action_required_roles = {
+        "create": BILLING_STAFF_ROLES,
+        "update": BILLING_STAFF_ROLES,
+        "partial_update": BILLING_STAFF_ROLES,
+        "destroy": BILLING_STAFF_ROLES,
+    }

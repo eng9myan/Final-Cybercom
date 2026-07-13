@@ -28,6 +28,8 @@ class ReferralProvider(BaseModel):
 
 
 class Referral(BaseModel):
+    data_classification = "phi"
+
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="referrals")
     referred_by = models.CharField(max_length=255)
     target_provider = models.ForeignKey(ReferralProvider, on_delete=models.PROTECT)
@@ -51,6 +53,8 @@ class Referral(BaseModel):
 
 
 class ReferralAttachment(BaseModel):
+    data_classification = "phi"
+
     referral = models.ForeignKey(Referral, on_delete=models.CASCADE, related_name="attachments")
     title = models.CharField(max_length=255)
     file_url = models.URLField(max_length=500)

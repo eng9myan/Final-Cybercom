@@ -1,90 +1,75 @@
 "use client";
 
 import { usePreferences } from "@/contexts/preferences";
+import { useAuth } from "@/contexts/auth";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
 
-// ─── Interfaces ───────────────────────────────────────────────────────────────
+// ─── Interfaces (mirror real backend serializers) ──────────────────────────────
+// core.scheduling.Appointment: id, patient, appointment_type, status, start_time,
+// end_time, description, participants[]. Status: proposed/pending/booked/arrived/
+// fulfilled/cancelled — NOT scheduled/confirmed/in_progress/completed.
+// clinic.appointments.ClinicAppointment: id, appointment (FK), specialty_code,
+// checkin_status, source. Carries no patient/provider/time data of its own.
 
-interface AppointmentRaw {
+interface AppointmentParticipant { id: string; actor_id: string; actor_type: "patient" | "provider" | "location"; }
+interface AppointmentCore {
   id: string;
-  patient_detail?: {
-    first_name?: string;
-    last_name?: string;
-    first_name_ar?: string;
-    last_name_ar?: string;
-    mrn?: string;
-  };
-  appointment_time?: string;
-  scheduled_time?: string;
-  specialty_detail?: { name?: string; name_ar?: string };
-  provider_detail?: { first_name?: string; last_name?: string };
-  status?: string;
-  notes?: string;
+  patient: string;
+  appointment_type: string;
+  status: "proposed" | "pending" | "booked" | "arrived" | "fulfilled" | "cancelled";
+  start_time: string;
+  end_time: string;
+  description: string;
+  participants: AppointmentParticipant[];
 }
+interface ClinicAppointmentRaw {
+  id: string;
+  appointment: string;
+  specialty_code: string;
+  checkin_status: "pending" | "checked_in" | "missed";
+  source: string;
+}
+interface PatientRaw { id: string; first_name: string; last_name: string; mrn: string; }
+interface ProviderRaw { id: string; first_name: string; last_name: string; }
+interface Paginated<T> { count: number; results: T[]; }
 
-interface Appointment {
+interface Row {
   id: string;
   patient_name: string;
-  patient_name_ar: string;
   mrn: string;
   date: string;
   time: string;
   specialty: string;
-  specialty_ar: string;
   provider: string;
-  status: "scheduled" | "confirmed" | "in_progress" | "completed" | "cancelled";
+  status: AppointmentCore["status"];
+  checkin_status: ClinicAppointmentRaw["checkin_status"] | null;
   notes: string;
 }
-
-// ─── Mock Data ────────────────────────────────────────────────────────────────
-
-const MOCK_APPOINTMENTS: Appointment[] = [
-  { id: "APT-001", patient_name: "Ahmed Al-Rashid",    patient_name_ar: "أحمد الراشد",      mrn: "MRN-001234", date: "2026-06-30", time: "08:00", specialty: "Internal Medicine",  specialty_ar: "الباطنية",          provider: "Dr. Samir Haddad",    status: "completed",   notes: "Follow-up on hypertension management" },
-  { id: "APT-002", patient_name: "Sara Khalil",         patient_name_ar: "سارة خليل",         mrn: "MRN-001235", date: "2026-06-30", time: "08:30", specialty: "Cardiology",          specialty_ar: "أمراض القلب",       provider: "Dr. Nadia Mansour",   status: "completed",   notes: "Echocardiogram review" },
-  { id: "APT-003", patient_name: "Omar Hassan",          patient_name_ar: "عمر حسن",           mrn: "MRN-001236", date: "2026-06-30", time: "09:00", specialty: "General Practice",    specialty_ar: "الطب العام",        provider: "Dr. Tarek Al-Amin",   status: "in_progress", notes: "Annual check-up" },
-  { id: "APT-004", patient_name: "Layla Mansour",       patient_name_ar: "ليلى منصور",        mrn: "MRN-001237", date: "2026-06-30", time: "09:30", specialty: "Dermatology",         specialty_ar: "الجلدية",           provider: "Dr. Reem Al-Sayed",   status: "confirmed",   notes: "Skin rash evaluation" },
-  { id: "APT-005", patient_name: "Khalid Al-Nouri",     patient_name_ar: "خالد النوري",       mrn: "MRN-001238", date: "2026-06-30", time: "10:00", specialty: "Orthopedics",         specialty_ar: "العظام والمفاصل",   provider: "Dr. Basel Farouk",    status: "confirmed",   notes: "Knee pain — MRI results" },
-  { id: "APT-006", patient_name: "Fatima Al-Zahra",     patient_name_ar: "فاطمة الزهراء",     mrn: "MRN-001239", date: "2026-06-30", time: "10:30", specialty: "Obstetrics",          specialty_ar: "التوليد والنساء",   provider: "Dr. Hala Ibrahim",    status: "scheduled",   notes: "28-week antenatal visit" },
-  { id: "APT-007", patient_name: "Yousef Al-Harbi",     patient_name_ar: "يوسف الحربي",       mrn: "MRN-001240", date: "2026-06-30", time: "11:00", specialty: "Ophthalmology",       specialty_ar: "طب العيون",         provider: "Dr. Mazen Qassem",    status: "scheduled",   notes: "Vision correction check" },
-  { id: "APT-008", patient_name: "Mariam Al-Otaibi",    patient_name_ar: "مريم العتيبي",      mrn: "MRN-001241", date: "2026-06-30", time: "11:30", specialty: "Endocrinology",       specialty_ar: "الغدد الصماء",      provider: "Dr. Samir Haddad",    status: "scheduled",   notes: "Diabetes HbA1c review" },
-  { id: "APT-009", patient_name: "Tariq Bin Sultan",    patient_name_ar: "طارق بن سلطان",     mrn: "MRN-001242", date: "2026-06-30", time: "12:00", specialty: "Pulmonology",         specialty_ar: "الرئة والجهاز التنفسي", provider: "Dr. Lina Yousef",  status: "cancelled",   notes: "COPD follow-up — patient no-show" },
-  { id: "APT-010", patient_name: "Noor Al-Deen",        patient_name_ar: "نور الدين",         mrn: "MRN-001243", date: "2026-06-30", time: "12:30", specialty: "Neurology",           specialty_ar: "الأعصاب",           provider: "Dr. Karim Nassar",    status: "scheduled",   notes: "Migraine management plan" },
-  { id: "APT-011", patient_name: "Hassan Al-Aqrabawi",  patient_name_ar: "حسن العقرباوي",     mrn: "MRN-001244", date: "2026-06-30", time: "13:00", specialty: "Gastroenterology",    specialty_ar: "الجهاز الهضمي",    provider: "Dr. Tarek Al-Amin",   status: "scheduled",   notes: "Colonoscopy results discussion" },
-  { id: "APT-012", patient_name: "Rana Al-Shammari",    patient_name_ar: "رنا الشمري",        mrn: "MRN-001245", date: "2026-06-30", time: "13:30", specialty: "Rheumatology",        specialty_ar: "الروماتيزم",        provider: "Dr. Nadia Mansour",   status: "scheduled",   notes: "Rheumatoid arthritis follow-up" },
-  { id: "APT-013", patient_name: "Ali Bin Jaber",       patient_name_ar: "علي بن جابر",       mrn: "MRN-001246", date: "2026-06-30", time: "14:00", specialty: "Urology",             specialty_ar: "المسالك البولية",   provider: "Dr. Basel Farouk",    status: "confirmed",   notes: "Kidney stone post-procedure check" },
-  { id: "APT-014", patient_name: "Dalal Al-Najjar",     patient_name_ar: "دلال النجار",       mrn: "MRN-001247", date: "2026-06-30", time: "14:30", specialty: "Hematology",          specialty_ar: "أمراض الدم",        provider: "Dr. Mazen Qassem",    status: "scheduled",   notes: "CBC follow-up — anemia workup" },
-  { id: "APT-015", patient_name: "Saad Al-Qahtani",     patient_name_ar: "سعد القحطاني",      mrn: "MRN-001248", date: "2026-06-30", time: "15:00", specialty: "Psychiatry",          specialty_ar: "الطب النفسي",       provider: "Dr. Lina Yousef",     status: "confirmed",   notes: "Depression medication review" },
-  { id: "APT-016", patient_name: "Noura Al-Mutairi",    patient_name_ar: "نورة المطيري",      mrn: "MRN-001249", date: "2026-06-30", time: "15:30", specialty: "Pediatrics",          specialty_ar: "طب الأطفال",        provider: "Dr. Hala Ibrahim",    status: "scheduled",   notes: "6-month vaccination schedule" },
-  { id: "APT-017", patient_name: "Ibrahim Al-Hajri",    patient_name_ar: "إبراهيم الحاجري",   mrn: "MRN-001250", date: "2026-06-30", time: "16:00", specialty: "Cardiology",          specialty_ar: "أمراض القلب",       provider: "Dr. Karim Nassar",    status: "scheduled",   notes: "Holter monitor results" },
-  { id: "APT-018", patient_name: "Wafa Al-Barrak",      patient_name_ar: "وفاء البراك",       mrn: "MRN-001251", date: "2026-06-30", time: "16:30", specialty: "Allergy & Immunology", specialty_ar: "الحساسية والمناعة", provider: "Dr. Reem Al-Sayed",  status: "scheduled",   notes: "Allergen panel review" },
-  { id: "APT-019", patient_name: "Bilal Al-Suwaidan",   patient_name_ar: "بلال السويدان",     mrn: "MRN-001252", date: "2026-06-30", time: "17:00", specialty: "ENT",                 specialty_ar: "الأنف والأذن والحنجرة", provider: "Dr. Samir Haddad", status: "scheduled", notes: "Sinusitis — endoscopy review" },
-  { id: "APT-020", patient_name: "Samira Al-Dosari",    patient_name_ar: "سميرة الدوسري",     mrn: "MRN-001253", date: "2026-06-30", time: "17:30", specialty: "Nephrology",          specialty_ar: "الكلى",             provider: "Dr. Tarek Al-Amin",   status: "cancelled",   notes: "CKD Stage 3 — cancelled by provider" },
-];
-
-const SPECIALTIES = ["All", "Internal Medicine", "Cardiology", "General Practice", "Dermatology", "Orthopedics", "Obstetrics", "Ophthalmology", "Endocrinology", "Pulmonology", "Neurology", "Gastroenterology", "Rheumatology", "Urology", "Hematology", "Psychiatry", "Pediatrics", "Allergy & Immunology", "ENT", "Nephrology"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function statusColor(status: string): string {
   switch (status) {
-    case "scheduled":   return "bg-sky-500/15 text-sky-300";
-    case "confirmed":   return "bg-emerald-500/15 text-emerald-300";
-    case "in_progress": return "bg-blue-500/15 text-blue-300";
-    case "completed":   return "bg-emerald-500/10 text-emerald-400";
-    case "cancelled":   return "bg-red-500/15 text-red-300";
-    default:            return "bg-ink/10 text-ink/60";
+    case "proposed":  return "bg-ink/10 text-ink/60";
+    case "pending":   return "bg-sky-500/15 text-sky-300";
+    case "booked":    return "bg-emerald-500/15 text-emerald-300";
+    case "arrived":   return "bg-blue-500/15 text-blue-300";
+    case "fulfilled": return "bg-emerald-500/10 text-emerald-400";
+    case "cancelled": return "bg-red-500/15 text-red-300";
+    default:          return "bg-ink/10 text-ink/60";
   }
 }
 
 function statusLabel(status: string, lang: "en" | "ar"): string {
   const map: Record<string, { en: string; ar: string }> = {
-    scheduled:   { en: "Scheduled",   ar: "مجدول"     },
-    confirmed:   { en: "Confirmed",   ar: "مؤكد"      },
-    in_progress: { en: "In Progress", ar: "جارٍ"       },
-    completed:   { en: "Completed",   ar: "مكتمل"     },
-    cancelled:   { en: "Cancelled",   ar: "ملغي"      },
+    proposed:  { en: "Proposed",  ar: "مقترح"  },
+    pending:   { en: "Pending",   ar: "قيد الانتظار" },
+    booked:    { en: "Booked",    ar: "محجوز"  },
+    arrived:   { en: "Arrived",   ar: "وصل"    },
+    fulfilled: { en: "Fulfilled", ar: "مكتمل"  },
+    cancelled: { en: "Cancelled", ar: "ملغي"   },
   };
   return map[status]?.[lang] ?? status;
 }
@@ -92,84 +77,120 @@ function statusLabel(status: string, lang: "en" | "ar"): string {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function AppointmentsPage() {
-  const [appointments, setAppointments] = useState<Appointment[]>(MOCK_APPOINTMENTS);
+  const { session, isAuthenticated } = useAuth();
+  const [rows, setRows] = useState<Row[]>([]);
   const { locale: lang, setLocale: _setLangRaw } = usePreferences();
   const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
     _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterSpecialty, setFilterSpecialty] = useState<string>("All");
-  const [filterDate, setFilterDate] = useState<string>("2026-06-30");
+  const [filterDate, setFilterDate] = useState<string>("");
   const [actionMsg, setActionMsg] = useState<string>("");
 
-  useEffect(() => {
-    async function loadData() {
-      setLoading(true);
-      try {
-        const data = await apiFetch<AppointmentRaw[]>("/api/v1/clinic/appointments/");
-        if (data && data.length > 0) {
-          const mapped: Appointment[] = data.map((item, idx) => {
-            const dt = item.appointment_time || item.scheduled_time || "";
-            const d = dt ? new Date(dt) : new Date();
-            return {
-              id: item.id,
-              patient_name: `${item.patient_detail?.first_name ?? "Patient"} ${item.patient_detail?.last_name ?? ""}`.trim(),
-              patient_name_ar: `${item.patient_detail?.first_name_ar ?? "مريض"} ${item.patient_detail?.last_name_ar ?? ""}`.trim(),
-              mrn: item.patient_detail?.mrn ?? `MRN-${String(idx).padStart(6, "0")}`,
-              date: d.toISOString().slice(0, 10),
-              time: d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-              specialty: item.specialty_detail?.name ?? "General Practice",
-              specialty_ar: item.specialty_detail?.name_ar ?? "الطب العام",
-              provider: `Dr. ${item.provider_detail?.first_name ?? ""} ${item.provider_detail?.last_name ?? ""}`.trim(),
-              status: (item.status ?? "scheduled") as Appointment["status"],
-              notes: item.notes ?? "",
-            };
-          });
-          setAppointments(mapped);
-        }
-      } catch (err) {
-        console.warn("Appointments API unavailable, using mock data:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    void loadData();
-  }, []);
+  const specialties = ["All", ...Array.from(new Set(rows.map(r => r.specialty).filter(Boolean))).sort()];
 
-  const handleAction = async (apt: Appointment, action: "confirm" | "cancel" | "reschedule") => {
-    const newStatus = action === "confirm" ? "confirmed" : action === "cancel" ? "cancelled" : "scheduled";
+  const loadData = useCallback(async () => {
+    if (!session) return;
+    setLoading(true);
+    setFetchError(null);
     try {
-      await apiFetch(`/api/v1/clinic/appointments/${apt.id}/`, {
+      const opts = { token: session.accessToken, tenantId: session.tenantId };
+      const [apptPage, clinicPage, patientPage, providerPage] = await Promise.all([
+        apiFetch<Paginated<AppointmentCore>>("/api/v1/scheduling/", opts),
+        apiFetch<Paginated<ClinicAppointmentRaw>>("/api/v1/clinic/appointments/bookings/", opts),
+        apiFetch<Paginated<PatientRaw>>("/api/v1/patients/", opts),
+        apiFetch<Paginated<ProviderRaw>>("/api/v1/providers/", opts),
+      ]);
+
+      const patientById = new Map(patientPage.results.map(p => [p.id, p]));
+      const providerById = new Map(providerPage.results.map(p => [p.id, p]));
+      const clinicByAppointmentId = new Map(clinicPage.results.map(c => [c.appointment, c]));
+
+      const mapped: Row[] = apptPage.results.map(appt => {
+        const patient = patientById.get(appt.patient);
+        const providerParticipant = appt.participants?.find(p => p.actor_type === "provider");
+        const provider = providerParticipant ? providerById.get(providerParticipant.actor_id) : undefined;
+        const overlay = clinicByAppointmentId.get(appt.id);
+        const d = new Date(appt.start_time);
+        return {
+          id: appt.id,
+          patient_name: patient ? `${patient.first_name} ${patient.last_name}` : "Unknown patient",
+          mrn: patient?.mrn ?? "—",
+          date: d.toISOString().slice(0, 10),
+          time: d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          specialty: overlay?.specialty_code ?? appt.appointment_type,
+          provider: provider ? `Dr. ${provider.first_name} ${provider.last_name}` : "Unassigned",
+          status: appt.status,
+          checkin_status: overlay?.checkin_status ?? null,
+          notes: appt.description ?? "",
+        };
+      });
+      setRows(mapped);
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load appointments."));
+    } finally {
+      setLoading(false);
+    }
+  }, [session]);
+
+  useEffect(() => { void loadData(); }, [loadData]);
+
+  const handleAction = async (row: Row, action: "confirm" | "cancel") => {
+    if (!session) return;
+    const newStatus = action === "confirm" ? "booked" : "cancelled";
+    try {
+      await apiFetch(`/api/v1/scheduling/${row.id}/`, {
         method: "PATCH",
         body: JSON.stringify({ status: newStatus }),
+        token: session.accessToken,
+        tenantId: session.tenantId,
       });
-    } catch {
-      /* silent — apply locally */
+      setRows(prev => prev.map(r => r.id === row.id ? { ...r, status: newStatus as Row["status"] } : r));
+      setActionMsg(lang === "en" ? `Appointment ${action === "confirm" ? "confirmed" : "cancelled"}.` : `تم تحديث الموعد.`);
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setActionMsg(detail || (lang === "en" ? "Action failed." : "فشل الإجراء."));
     }
-    setAppointments(prev => prev.map(a => a.id === apt.id ? { ...a, status: newStatus as Appointment["status"] } : a));
-    setActionMsg(lang === "en" ? `Appointment ${apt.id} ${action}ed.` : `تم تحديث الموعد ${apt.id}.`);
     setTimeout(() => setActionMsg(""), 3000);
   };
 
-  const filtered = appointments.filter(a => {
-    const matchStatus    = filterStatus === "all" || a.status === filterStatus;
-    const matchSpecialty = filterSpecialty === "All" || a.specialty === filterSpecialty;
-    const matchDate      = !filterDate || a.date === filterDate;
+  const filtered = rows.filter(r => {
+    const matchStatus    = filterStatus === "all" || r.status === filterStatus;
+    const matchSpecialty = filterSpecialty === "All" || r.specialty === filterSpecialty;
+    const matchDate      = !filterDate || r.date === filterDate;
     return matchStatus && matchSpecialty && matchDate;
   });
 
   const metrics = {
-    total:       appointments.length,
-    scheduled:   appointments.filter(a => a.status === "scheduled").length,
-    confirmed:   appointments.filter(a => a.status === "confirmed").length,
-    in_progress: appointments.filter(a => a.status === "in_progress").length,
-    completed:   appointments.filter(a => a.status === "completed").length,
-    cancelled:   appointments.filter(a => a.status === "cancelled").length,
+    total:     rows.length,
+    pending:   rows.filter(r => r.status === "pending" || r.status === "proposed").length,
+    booked:    rows.filter(r => r.status === "booked").length,
+    arrived:   rows.filter(r => r.status === "arrived").length,
+    fulfilled: rows.filter(r => r.status === "fulfilled").length,
+    cancelled: rows.filter(r => r.status === "cancelled").length,
   };
 
   const dir = lang === "ar" ? "rtl" : "ltr";
-  const inputCls = "w-full rounded-lg border border-ink/10 bg-surface px-3.5 py-2.5 text-sm text-ink";
-  const labelCls = "mb-1.5 block text-[13px] font-semibold text-ink/50";
+
+  if (!isAuthenticated) {
+    return <div className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold">Sign in required</h1></div>;
+  }
+  if (fetchError) {
+    return (
+      <div role="alert" className="mx-auto mt-16 max-w-lg text-center">
+        <h1 className="text-xl font-bold text-red-400">
+          {lang === "en" ? "Unable to load appointments" : "تعذر تحميل المواعيد"}
+        </h1>
+        <p className="mt-1 text-sm text-ink/50">{fetchError}</p>
+        <button onClick={() => void loadData()} className="cy-btn cy-btn-ghost mt-4 !min-h-0 !py-2 !px-4 text-sm">
+          {lang === "en" ? "Retry" : "إعادة المحاولة"}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div dir={dir} className="mx-auto max-w-5xl">
@@ -184,7 +205,7 @@ export default function AppointmentsPage() {
             {lang === "en" ? "Appointment Scheduling" : "جدولة المواعيد"}
           </h1>
           <p className="mt-1 text-sm text-ink/50">
-            {lang === "en" ? "Manage clinic appointments for today" : "إدارة مواعيد العيادة لليوم"}
+            {lang === "en" ? "Manage clinic appointments" : "إدارة مواعيد العيادة"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -222,12 +243,12 @@ export default function AppointmentsPage() {
       {/* Metrics cards */}
       <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-6">
         {[
-          { label: lang === "en" ? "Total"       : "الإجمالي",    value: metrics.total,       color: "#22D3EE" },
-          { label: lang === "en" ? "Scheduled"   : "مجدول",       value: metrics.scheduled,   color: "#0ea5e9" },
-          { label: lang === "en" ? "Confirmed"   : "مؤكد",        value: metrics.confirmed,   color: "#22c55e" },
-          { label: lang === "en" ? "In Progress" : "جارٍ",         value: metrics.in_progress, color: "#3b82f6" },
-          { label: lang === "en" ? "Completed"   : "مكتمل",       value: metrics.completed,   color: "#8b5cf6" },
-          { label: lang === "en" ? "Cancelled"   : "ملغي",        value: metrics.cancelled,   color: "#ef4444" },
+          { label: lang === "en" ? "Total"     : "الإجمالي",       value: metrics.total,     color: "#22D3EE" },
+          { label: lang === "en" ? "Pending"   : "قيد الانتظار",   value: metrics.pending,   color: "#0ea5e9" },
+          { label: lang === "en" ? "Booked"    : "محجوز",          value: metrics.booked,    color: "#22c55e" },
+          { label: lang === "en" ? "Arrived"   : "وصل",            value: metrics.arrived,   color: "#3b82f6" },
+          { label: lang === "en" ? "Fulfilled" : "مكتمل",          value: metrics.fulfilled, color: "#8b5cf6" },
+          { label: lang === "en" ? "Cancelled" : "ملغي",           value: metrics.cancelled, color: "#ef4444" },
         ].map(m => (
           <div key={m.label} className="cy-card p-4 text-center">
             <p className="text-2xl font-bold" style={{ color: m.color }}>{m.value}</p>
@@ -258,7 +279,7 @@ export default function AppointmentsPage() {
             onChange={e => setFilterStatus(e.target.value)}
             className="rounded-md border border-ink/10 bg-surface px-3 py-1.5 text-sm text-ink"
           >
-            {["all", "scheduled", "confirmed", "in_progress", "completed", "cancelled"].map(s => (
+            {["all", "proposed", "pending", "booked", "arrived", "fulfilled", "cancelled"].map(s => (
               <option key={s} value={s}>{s === "all" ? (lang === "en" ? "All Statuses" : "كل الحالات") : statusLabel(s, lang)}</option>
             ))}
           </select>
@@ -272,13 +293,13 @@ export default function AppointmentsPage() {
             onChange={e => setFilterSpecialty(e.target.value)}
             className="max-w-[220px] rounded-md border border-ink/10 bg-surface px-3 py-1.5 text-sm text-ink"
           >
-            {SPECIALTIES.map(s => (
+            {specialties.map(s => (
               <option key={s} value={s}>{s === "All" ? (lang === "en" ? "All Specialties" : "كل التخصصات") : s}</option>
             ))}
           </select>
         </div>
         <div className="ml-auto self-end pb-1.5 text-sm text-ink/50">
-          {lang === "en" ? `Showing ${filtered.length} of ${appointments.length}` : `عرض ${filtered.length} من ${appointments.length}`}
+          {lang === "en" ? `Showing ${filtered.length} of ${rows.length}` : `عرض ${filtered.length} من ${rows.length}`}
         </div>
       </div>
 
@@ -302,57 +323,42 @@ export default function AppointmentsPage() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(apt => (
-              <tr key={apt.id} className="border-b border-ink/5">
-                <td className="whitespace-nowrap px-4 py-3.5 text-sm font-bold text-brand-400">{apt.time}</td>
-                <td className="px-4 py-3.5 font-mono text-xs text-ink/50">{apt.mrn}</td>
+            {filtered.map(row => (
+              <tr key={row.id} className="border-b border-ink/5">
+                <td className="whitespace-nowrap px-4 py-3.5 text-sm font-bold text-brand-400">{row.time}</td>
+                <td className="px-4 py-3.5 font-mono text-xs text-ink/50">{row.mrn}</td>
                 <td className="px-4 py-3.5">
-                  <div className="text-sm font-semibold">
-                    {lang === "ar" ? apt.patient_name_ar : apt.patient_name}
-                  </div>
-                  <div className="mt-0.5 text-xs text-ink/50">{apt.id}</div>
+                  <div className="text-sm font-semibold">{row.patient_name}</div>
+                  <div className="mt-0.5 text-xs text-ink/50">{row.id}</div>
                 </td>
-                <td className="px-4 py-3.5 text-sm">
-                  {lang === "ar" ? apt.specialty_ar : apt.specialty}
-                </td>
-                <td className="px-4 py-3.5 text-sm">{apt.provider}</td>
+                <td className="px-4 py-3.5 text-sm">{row.specialty}</td>
+                <td className="px-4 py-3.5 text-sm">{row.provider}</td>
                 <td className="px-4 py-3.5">
-                  <span className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold ${statusColor(apt.status)}`}>
-                    {statusLabel(apt.status, lang)}
+                  <span className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold ${statusColor(row.status)}`}>
+                    {statusLabel(row.status, lang)}
                   </span>
                 </td>
                 <td className="max-w-[200px] px-4 py-3.5 text-xs text-ink/50">
-                  <span title={apt.notes} className="block truncate">{apt.notes}</span>
+                  <span title={row.notes} className="block truncate">{row.notes}</span>
                 </td>
                 <td className="px-4 py-3.5">
                   <div className="flex flex-nowrap gap-1.5">
-                    {apt.status === "scheduled" && (
+                    {(row.status === "proposed" || row.status === "pending") && (
                       <button
-                        onClick={() => { void handleAction(apt, "confirm"); }}
+                        onClick={() => { void handleAction(row, "confirm"); }}
                         className="whitespace-nowrap rounded-md bg-emerald-500 px-2.5 py-1.5 text-xs font-bold text-white"
                       >
                         {lang === "en" ? "Confirm" : "تأكيد"}
                       </button>
                     )}
-                    {(apt.status === "scheduled" || apt.status === "confirmed") && (
-                      <>
-                        <button
-                          onClick={() => { void handleAction(apt, "reschedule"); }}
-                          className="whitespace-nowrap rounded-md bg-amber-500 px-2.5 py-1.5 text-xs font-bold text-white"
-                        >
-                          {lang === "en" ? "Reschedule" : "إعادة جدولة"}
-                        </button>
-                        <button
-                          onClick={() => { void handleAction(apt, "cancel"); }}
-                          className="whitespace-nowrap rounded-md bg-red-500 px-2.5 py-1.5 text-xs font-bold text-white"
-                        >
-                          {lang === "en" ? "Cancel" : "إلغاء"}
-                        </button>
-                      </>
+                    {row.status !== "cancelled" && row.status !== "fulfilled" && (
+                      <button
+                        onClick={() => { void handleAction(row, "cancel"); }}
+                        className="whitespace-nowrap rounded-md bg-red-500 px-2.5 py-1.5 text-xs font-bold text-white"
+                      >
+                        {lang === "en" ? "Cancel" : "إلغاء"}
+                      </button>
                     )}
-                    <button className="cy-btn cy-btn-ghost !min-h-0 whitespace-nowrap !py-1.5 !px-2.5 text-xs">
-                      {lang === "en" ? "View" : "عرض"}
-                    </button>
                   </div>
                 </td>
               </tr>
@@ -361,7 +367,9 @@ export default function AppointmentsPage() {
         </table>
         {filtered.length === 0 && (
           <div className="p-12 text-center text-sm text-ink/40">
-            {lang === "en" ? "No appointments match the selected filters." : "لا توجد مواعيد تطابق عوامل التصفية المحددة."}
+            {rows.length === 0
+              ? (lang === "en" ? "No appointments scheduled." : "لا توجد مواعيد مجدولة.")
+              : (lang === "en" ? "No appointments match the selected filters." : "لا توجد مواعيد تطابق عوامل التصفية المحددة.")}
           </div>
         )}
       </div>

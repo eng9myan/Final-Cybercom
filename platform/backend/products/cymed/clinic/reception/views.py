@@ -16,6 +16,8 @@ from products.cymed.clinic.reception.serializers import (
 )
 from products.cymed.clinic.views import ClinicModelViewSet
 
+RECEPTION_STAFF_ROLES = {"physician", "nurse", "receptionist"}
+
 
 class ArrivalMethodViewSet(ClinicModelViewSet):
     queryset = ArrivalMethod.objects.all()
@@ -35,13 +37,28 @@ class VisitStatusViewSet(ClinicModelViewSet):
 class CheckInViewSet(ClinicModelViewSet):
     queryset = CheckIn.objects.all()
     serializer_class = CheckInSerializer
+    action_required_roles = {
+        "create": RECEPTION_STAFF_ROLES,
+        "update": RECEPTION_STAFF_ROLES,
+        "partial_update": RECEPTION_STAFF_ROLES,
+    }
 
 
 class CheckOutViewSet(ClinicModelViewSet):
     queryset = CheckOut.objects.all()
     serializer_class = CheckOutSerializer
+    action_required_roles = {
+        "create": RECEPTION_STAFF_ROLES,
+        "update": RECEPTION_STAFF_ROLES,
+        "partial_update": RECEPTION_STAFF_ROLES,
+    }
 
 
 class PatientQueueTicketViewSet(ClinicModelViewSet):
     queryset = PatientQueueTicket.objects.all()
     serializer_class = PatientQueueTicketSerializer
+    action_required_roles = {
+        "create": RECEPTION_STAFF_ROLES,
+        "update": RECEPTION_STAFF_ROLES,
+        "partial_update": RECEPTION_STAFF_ROLES,
+    }

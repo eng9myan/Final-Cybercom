@@ -16,6 +16,11 @@ from products.cymed.clinic.views import ClinicModelViewSet
 class ReferralViewSet(ClinicModelViewSet):
     queryset = Referral.objects.all()
     serializer_class = ReferralSerializer
+    action_required_roles = {
+        "create": {"physician"},
+        "update": {"physician"},
+        "partial_update": {"physician"},
+    }
 
 
 class ReferralReasonViewSet(ClinicModelViewSet):

@@ -64,6 +64,8 @@ class ClinicalFormTemplate(BaseModel):
 
 
 class ClinicalFormSubmission(BaseModel):
+    data_classification = "phi"
+
     form = models.ForeignKey(ClinicalForm, on_delete=models.CASCADE, related_name="submissions")
     patient_id = models.UUIDField(db_index=True)
     encounter_id = models.UUIDField(db_index=True, null=True, blank=True)

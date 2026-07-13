@@ -5,6 +5,8 @@ from products.cymed.core.scheduling.models import Appointment
 
 
 class ClinicAppointment(BaseModel):
+    data_classification = "phi"
+
     appointment = models.OneToOneField(
         Appointment, on_delete=models.CASCADE, related_name="clinic_details"
     )
@@ -21,6 +23,8 @@ class ClinicAppointment(BaseModel):
 
 
 class AppointmentReminder(BaseModel):
+    data_classification = "phi"
+
     clinic_appointment = models.ForeignKey(
         ClinicAppointment, on_delete=models.CASCADE, related_name="reminders"
     )
@@ -40,6 +44,8 @@ class AppointmentReminder(BaseModel):
 
 
 class AppointmentWaitlist(BaseModel):
+    data_classification = "phi"
+
     patient_id = models.UUIDField()
     provider_id = models.UUIDField()
     specialty_code = models.CharField(max_length=100)

@@ -5,6 +5,8 @@ from products.cymed.core.patients.models import Patient
 
 
 class VirtualVisit(BaseModel):
+    data_classification = "phi"
+
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="virtual_visits")
     provider_id = models.UUIDField()  # references Provider
     scheduled_start = models.DateTimeField()
@@ -24,6 +26,8 @@ class VirtualVisit(BaseModel):
 
 
 class VirtualSession(BaseModel):
+    data_classification = "phi"
+
     visit = models.OneToOneField(VirtualVisit, on_delete=models.CASCADE, related_name="session")
     session_token = models.CharField(max_length=255)
     connection_url = models.URLField(max_length=500)
@@ -35,6 +39,8 @@ class VirtualSession(BaseModel):
 
 
 class VirtualRecording(BaseModel):
+    data_classification = "phi"
+
     session = models.ForeignKey(VirtualSession, on_delete=models.CASCADE, related_name="recordings")
     recording_url = models.URLField(max_length=500)
     duration_seconds = models.PositiveIntegerField()
@@ -44,6 +50,8 @@ class VirtualRecording(BaseModel):
 
 
 class VirtualConsent(BaseModel):
+    data_classification = "phi"
+
     patient = models.ForeignKey(
         Patient, on_delete=models.CASCADE, related_name="telemedicine_consents"
     )

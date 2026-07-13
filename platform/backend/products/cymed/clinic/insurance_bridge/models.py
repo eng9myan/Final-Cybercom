@@ -28,6 +28,8 @@ class InsurancePlan(BaseModel):
 
 
 class EligibilityCheck(BaseModel):
+    data_classification = "phi"
+
     patient = models.ForeignKey(
         Patient, on_delete=models.CASCADE, related_name="eligibility_checks"
     )
@@ -41,6 +43,8 @@ class EligibilityCheck(BaseModel):
 
 
 class AuthorizationRequest(BaseModel):
+    data_classification = "phi"
+
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
     plan = models.ForeignKey(InsurancePlan, on_delete=models.CASCADE)
     requested_service = models.CharField(max_length=255)
@@ -56,6 +60,8 @@ class AuthorizationRequest(BaseModel):
 
 
 class AuthorizationResponse(BaseModel):
+    data_classification = "phi"
+
     request = models.OneToOneField(
         AuthorizationRequest, on_delete=models.CASCADE, related_name="response"
     )

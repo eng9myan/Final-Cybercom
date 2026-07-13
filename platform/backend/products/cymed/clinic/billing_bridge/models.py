@@ -46,6 +46,8 @@ class ClinicService(BaseModel):
 
 
 class ChargeItem(BaseModel):
+    data_classification = "phi"
+
     encounter = models.ForeignKey(Encounter, on_delete=models.CASCADE, related_name="charges")
     service = models.ForeignKey(ClinicService, on_delete=models.PROTECT)
     quantity = models.PositiveIntegerField(default=1)

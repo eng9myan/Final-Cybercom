@@ -532,3 +532,210 @@ class TestClinicEdition:
         assert response.status_code == 201
         assert response.data["posted_to_erp"] is True
         assert response.data["erp_transaction_id"].startswith("ERP-TX-")
+
+
+def _make_role_client(test_tenant_id, private_key, roles: list[str], sub: str = "66666666-6666-6666-6666-666666666666"):
+    client = APIClient()
+    now = int(time.time())
+    payload = {
+        "sub": sub,
+        "email": "staff@cymed.io",
+        "tenant_id": str(test_tenant_id),
+        "realm_access": {"roles": roles},
+        "roles": roles,
+        "permissions": ["read", "write"],
+        "iat": now,
+        "exp": now + 3600,
+        "aud": settings.CYIDENTITY_CLIENT_ID,
+        "iss": settings.CYIDENTITY_ISSUER,
+    }
+    token = jwt.encode(payload, private_key, algorithm="RS256")
+    client.credentials(
+        HTTP_AUTHORIZATION=f"Bearer {token}",
+        HTTP_X_TENANT_ID=str(test_tenant_id),
+    )
+    return client
+
+
+@pytest.fixture
+def receptionist_client(test_tenant_id, _rsa_keypair, _mock_jwks):
+    private_key, _public_pem = _rsa_keypair
+    return _make_role_client(
+        test_tenant_id, private_key, ["receptionist"], sub="77777777-7777-7777-7777-777777777777"
+    )
+
+
+@pytest.fixture
+def physician_client(test_tenant_id, _rsa_keypair, _mock_jwks):
+    private_key, _public_pem = _rsa_keypair
+    return _make_role_client(
+        test_tenant_id, private_key, ["physician"], sub="88888888-8888-8888-8888-888888888888"
+    )
+
+
+@pytest.mark.django_db
+class TestClinicActionRBAC:
+    """
+    Previously every clinic endpoint only required IsAuthenticated -- any
+    authenticated user of any role could book/cancel appointments, post
+    consultation notes, or post billing charges for their tenant. These
+    tests prove the per-action role gate added to ClinicModelViewSet
+    subclasses (appointments/consultations/billing/insurance/reception/
+    triage/referrals) actually blocks the wrong role and allows the right
+    one, using real signed/verified JWTs -- mirrors
+    hospital/tests/test_hospital.py::TestHospitalActionRBAC.
+    """
+
+    def test_receptionist_cannot_write_consultation_but_physician_can(
+        self, receptionist_client, physician_client, test_tenant_id
+    ):
+        org = Organization.objects.create(
+            tenant_id=test_tenant_id, name="RBAC Org", slug="rbac-org", organization_type="clinic"
+        )
+        fac = Facility.objects.create(
+            tenant_id=test_tenant_id, organization=org, name="RBAC Fac", code="RBAC-FAC"
+        )
+        patient = Patient.objects.create(
+            tenant_id=test_tenant_id, first_name="Rbac", last_name="Patient", dob="1990-01-01", mrn="MRN-RBAC-01"
+        )
+        enc = Encounter.objects.create(
+            tenant_id=test_tenant_id, patient=patient, encounter_type="outpatient",
+            status="in_progress", organization=org, facility=fac,
+        )
+
+        receptionist_resp = receptionist_client.post(
+            "/api/v1/clinic/consultations/notes/",
+            {"encounter": str(enc.id), "consulted_by": "Dr. Should Not Matter", "subjective": "x"},
+            format="json",
+        )
+        assert receptionist_resp.status_code == 403
+
+        physician_resp = physician_client.post(
+            "/api/v1/clinic/consultations/notes/",
+            {"encounter": str(enc.id), "consulted_by": "Dr. Physician", "subjective": "x"},
+            format="json",
+        )
+        assert physician_resp.status_code == 201
+
+    def test_physician_cannot_checkin_but_receptionist_can(
+        self, receptionist_client, physician_client, test_tenant_id
+    ):
+        patient = Patient.objects.create(
+            tenant_id=test_tenant_id, first_name="Checkin", last_name="Patient", dob="1990-01-01", mrn="MRN-RBAC-02"
+        )
+        arr_method = ArrivalMethod.objects.create(
+            tenant_id=test_tenant_id, name="Walk-In", code="walkin-rbac"
+        )
+        reason = VisitReason.objects.create(tenant_id=test_tenant_id, name="Checkup", code="checkup-rbac")
+        status_model = VisitStatus.objects.create(
+            tenant_id=test_tenant_id, name="Open", code="open-rbac"
+        )
+
+        physician_resp = physician_client.post(
+            "/api/v1/clinic/reception/checkins/",
+            {
+                "patient": str(patient.id),
+                "arrival_method": arr_method.id,
+                "visit_reason": reason.id,
+                "status": status_model.id,
+            },
+            format="json",
+        )
+        assert physician_resp.status_code == 403
+
+        receptionist_resp = receptionist_client.post(
+            "/api/v1/clinic/reception/checkins/",
+            {
+                "patient": str(patient.id),
+                "arrival_method": arr_method.id,
+                "visit_reason": reason.id,
+                "status": status_model.id,
+            },
+            format="json",
+        )
+        assert receptionist_resp.status_code == 201
+
+
+@pytest.mark.django_db
+class TestClinicPHIAudit:
+    """
+    Clinic had zero AuditService coverage and zero data_classification
+    markers despite handling patient vitals, SOAP notes, and consent --
+    the same HIPAA gap class closed for Hospital. These prove both are
+    now real: mutating a PHI-classified model writes a real AuditEvent,
+    and mutating a non-PHI reference-data model does not.
+    """
+
+    def test_checkin_create_writes_real_audit_event(self, auth_client, test_tenant_id):
+        from platform.audit.models import AuditEvent
+
+        patient = Patient.objects.create(
+            tenant_id=test_tenant_id, first_name="Audit", last_name="Patient", dob="1990-01-01", mrn="MRN-AUDIT-01"
+        )
+        arr_method = ArrivalMethod.objects.create(tenant_id=test_tenant_id, name="Walk-In", code="walkin-audit")
+        reason = VisitReason.objects.create(tenant_id=test_tenant_id, name="Checkup", code="checkup-audit")
+        status_model = VisitStatus.objects.create(tenant_id=test_tenant_id, name="Open", code="open-audit")
+
+        assert AuditEvent.objects.filter(tenant_id=test_tenant_id, resource_type="CheckIn").count() == 0
+
+        response = auth_client.post(
+            "/api/v1/clinic/reception/checkins/",
+            {
+                "patient": str(patient.id),
+                "arrival_method": arr_method.id,
+                "visit_reason": reason.id,
+                "status": status_model.id,
+            },
+            format="json",
+        )
+        assert response.status_code == 201
+
+        events = AuditEvent.objects.filter(tenant_id=test_tenant_id, resource_type="CheckIn")
+        assert events.count() == 1
+        event = events.first()
+        assert event.action_verb == "CREATE"
+        assert event.data_classification == "phi"
+        assert event.resource_id == response.data["id"]
+
+    def test_arrival_method_create_is_not_audited(self, auth_client, test_tenant_id):
+        from platform.audit.models import AuditEvent
+
+        response = auth_client.post(
+            "/api/v1/clinic/reception/arrival-methods/",
+            {"name": "Ambulance", "code": "ambulance-noaudit"},
+            format="json",
+        )
+        assert response.status_code == 201
+        assert AuditEvent.objects.filter(tenant_id=test_tenant_id, resource_type="ArrivalMethod").count() == 0
+
+    def test_consultation_read_is_audited(self, auth_client, test_tenant_id):
+        from platform.audit.models import AuditEvent
+
+        org = Organization.objects.create(
+            tenant_id=test_tenant_id, name="Read Org", slug="read-org", organization_type="clinic"
+        )
+        fac = Facility.objects.create(
+            tenant_id=test_tenant_id, organization=org, name="Read Fac", code="READ-FAC"
+        )
+        patient = Patient.objects.create(
+            tenant_id=test_tenant_id, first_name="Read", last_name="Patient", dob="1990-01-01", mrn="MRN-AUDIT-02"
+        )
+        enc = Encounter.objects.create(
+            tenant_id=test_tenant_id, patient=patient, encounter_type="outpatient",
+            status="in_progress", organization=org, facility=fac,
+        )
+        create_resp = auth_client.post(
+            "/api/v1/clinic/consultations/notes/",
+            {"encounter": str(enc.id), "consulted_by": "Dr. Reader", "subjective": "x"},
+            format="json",
+        )
+        assert create_resp.status_code == 201
+        consultation_id = create_resp.data["id"]
+
+        read_resp = auth_client.get(f"/api/v1/clinic/consultations/notes/{consultation_id}/")
+        assert read_resp.status_code == 200
+
+        read_events = AuditEvent.objects.filter(
+            tenant_id=test_tenant_id, resource_type="Consultation", action_verb="READ"
+        )
+        assert read_events.count() == 1

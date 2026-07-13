@@ -1,271 +1,218 @@
 "use client";
 
 import { usePreferences } from "@/contexts/preferences";
+import { useAuth } from "@/contexts/auth";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { apiFetch } from "@/lib/api";
 
-// ─── Interfaces ───────────────────────────────────────────────────────────────
+// ─── Interfaces (mirror real backend serializers) ──────────────────────────────
+// clinic.triage.TriageAssessmentSerializer: id, checkin, assessed_at,
+// assessed_by, chief_complaint, triage_category (5-level: immediate/emergent/
+// urgent/less_urgent/non_urgent), vital_signs{...}, risk_score{...} (server-
+// computed MEWS, read-only). No custom update() exists on the backend — an
+// assessment is created once with its vitals; there is no supported edit flow,
+// which matches its real clinical-record-immutability intent.
 
-interface TriageRaw {
+interface VitalSignsRaw {
+  weight_kg: number | null;
+  height_cm: number | null;
+  bmi: number | null;
+  temperature_c: number | null;
+  blood_pressure_systolic: number | null;
+  blood_pressure_diastolic: number | null;
+  pulse_bpm: number | null;
+  respiratory_rate_pm: number | null;
+  oxygen_saturation_pct: number | null;
+  pain_score: number;
+}
+interface RiskScoreRaw { mews_score: number; abnormal_flag: boolean; risk_level: string; ai_risk_assessment: string; }
+interface TriageAssessmentRaw {
   id: string;
-  patient_detail?: {
-    first_name?: string;
-    last_name?: string;
-    first_name_ar?: string;
-    last_name_ar?: string;
-    mrn?: string;
-    date_of_birth?: string;
-    gender?: string;
-  };
-  arrival_time?: string;
-  chief_complaint?: string;
-  triage_level?: string;
-  bp_systolic?: number;
-  bp_diastolic?: number;
-  heart_rate?: number;
-  temperature?: number;
-  spo2?: number;
-  pain_score?: number;
-  respiratory_rate?: number;
-  status?: string;
-  notes?: string;
-}
-
-interface TriagePatient {
-  id: string;
-  patient_name: string;
-  patient_name_ar: string;
-  mrn: string;
-  dob: string;
-  gender: string;
-  arrival_time: string;
+  checkin: string;
+  assessed_at: string;
+  assessed_by: string;
   chief_complaint: string;
-  chief_complaint_ar: string;
-  triage_level: "urgent" | "semi_urgent" | "routine";
-  vitals: {
-    bp: string;
-    hr: number;
-    temp: number;
-    spo2: number;
-    rr: number;
-    pain: number;
-  };
-  status: "awaiting_triage" | "triaged" | "in_consultation";
-  notes: string;
+  triage_category: "immediate" | "emergent" | "urgent" | "less_urgent" | "non_urgent";
+  vital_signs: VitalSignsRaw | null;
+  risk_score: RiskScoreRaw | null;
+}
+interface CheckInRaw { id: string; patient: string; checkin_time: string; }
+interface PatientRaw { id: string; first_name: string; last_name: string; mrn: string; }
+interface Paginated<T> { count: number; results: T[]; }
+
+interface QueueItem { checkinId: string; patient_name: string; mrn: string; checkin_time: string; }
+interface AssessedItem {
+  id: string; patient_name: string; mrn: string; assessed_at: string; assessed_by: string;
+  chief_complaint: string; category: TriageAssessmentRaw["triage_category"];
+  vitals: VitalSignsRaw | null; risk: RiskScoreRaw | null;
 }
 
-interface TriageFormData {
-  bp_systolic: string;
-  bp_diastolic: string;
-  hr: string;
-  temp: string;
-  spo2: string;
-  rr: string;
-  pain: string;
+interface FormData {
   chief_complaint: string;
-  triage_level: "urgent" | "semi_urgent" | "routine";
-  notes: string;
+  triage_category: TriageAssessmentRaw["triage_category"];
+  weight_kg: string; height_cm: string; temperature_c: string;
+  bp_systolic: string; bp_diastolic: string; pulse: string; rr: string; spo2: string; pain: string;
 }
 
-// ─── Mock Data ────────────────────────────────────────────────────────────────
-
-const MOCK_TRIAGE: TriagePatient[] = [
-  {
-    id: "TRG-001", patient_name: "Khalid Al-Nouri",    patient_name_ar: "خالد النوري",     mrn: "MRN-001238", dob: "1975-04-30", gender: "Male",
-    arrival_time: "09:02", chief_complaint: "Chest pain, radiating to left arm", chief_complaint_ar: "ألم في الصدر يمتد إلى الذراع اليسرى",
-    triage_level: "urgent",
-    vitals: { bp: "158/96", hr: 112, temp: 37.1, spo2: 94, rr: 22, pain: 8 },
-    status: "awaiting_triage", notes: "Diaphoretic on arrival. Hx of HTN."
-  },
-  {
-    id: "TRG-002", patient_name: "Noor Al-Deen",       patient_name_ar: "نور الدين",        mrn: "MRN-001243", dob: "1988-12-05", gender: "Male",
-    arrival_time: "09:18", chief_complaint: "Severe headache, photophobia", chief_complaint_ar: "صداع شديد وحساسية للضوء",
-    triage_level: "semi_urgent",
-    vitals: { bp: "142/88", hr: 98, temp: 37.8, spo2: 98, rr: 18, pain: 7 },
-    status: "awaiting_triage", notes: "No neck stiffness. Taking sumatriptan at home."
-  },
-  {
-    id: "TRG-003", patient_name: "Fatima Al-Zahra",    patient_name_ar: "فاطمة الزهراء",    mrn: "MRN-001239", dob: "2000-09-18", gender: "Female",
-    arrival_time: "09:25", chief_complaint: "Abdominal pain, 28 weeks pregnant", chief_complaint_ar: "ألم في البطن — حمل أسبوع 28",
-    triage_level: "semi_urgent",
-    vitals: { bp: "128/82", hr: 94, temp: 37.2, spo2: 99, rr: 16, pain: 6 },
-    status: "awaiting_triage", notes: "G2P1. No bleeding reported. Fetal movement present."
-  },
-  {
-    id: "TRG-004", patient_name: "Hassan Al-Aqrabawi", patient_name_ar: "حسن العقرباوي",    mrn: "MRN-001244", dob: "1950-02-14", gender: "Male",
-    arrival_time: "09:31", chief_complaint: "Shortness of breath, productive cough", chief_complaint_ar: "ضيق في التنفس وسعال منتج",
-    triage_level: "semi_urgent",
-    vitals: { bp: "135/85", hr: 104, temp: 38.4, spo2: 91, rr: 24, pain: 4 },
-    status: "awaiting_triage", notes: "COPD patient. O2 supplementation started."
-  },
-  {
-    id: "TRG-005", patient_name: "Rana Al-Shammari",   patient_name_ar: "رنا الشمري",       mrn: "MRN-001245", dob: "1995-07-09", gender: "Female",
-    arrival_time: "09:40", chief_complaint: "Swollen, painful right knee", chief_complaint_ar: "تورم وألم في الركبة اليمنى",
-    triage_level: "routine",
-    vitals: { bp: "118/76", hr: 82, temp: 36.9, spo2: 99, rr: 15, pain: 5 },
-    status: "awaiting_triage", notes: "Fell on stairs 2 hours ago. No LOC."
-  },
-  {
-    id: "TRG-006", patient_name: "Dalal Al-Najjar",    patient_name_ar: "دلال النجار",      mrn: "MRN-001247", dob: "1982-03-22", gender: "Female",
-    arrival_time: "09:45", chief_complaint: "Generalized fatigue, dizziness", chief_complaint_ar: "إعياء عام ودوار",
-    triage_level: "routine",
-    vitals: { bp: "105/68", hr: 78, temp: 36.7, spo2: 98, rr: 14, pain: 2 },
-    status: "triaged", notes: "Hx of iron-deficiency anemia. Fasting this morning."
-  },
-  {
-    id: "TRG-007", patient_name: "Bilal Al-Suwaidan",  patient_name_ar: "بلال السويدان",    mrn: "MRN-001252", dob: "1970-11-30", gender: "Male",
-    arrival_time: "08:50", chief_complaint: "Ear pain, reduced hearing left ear", chief_complaint_ar: "ألم في الأذن وانخفاض السمع في الأذن اليسرى",
-    triage_level: "routine",
-    vitals: { bp: "122/80", hr: 76, temp: 37.3, spo2: 99, rr: 14, pain: 3 },
-    status: "in_consultation", notes: "3-day history. On antibiotics."
-  },
-];
+const EMPTY_FORM: FormData = {
+  chief_complaint: "", triage_category: "non_urgent",
+  weight_kg: "", height_cm: "", temperature_c: "",
+  bp_systolic: "", bp_diastolic: "", pulse: "", rr: "", spo2: "", pain: "0",
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function triageStyle(level: string): { bg: string; border: string; text: string; dot: string; label_en: string; label_ar: string } {
-  switch (level) {
-    case "urgent":     return { bg: "#fef2f2", border: "#fecaca", text: "#991b1b", dot: "#ef4444", label_en: "Urgent",      label_ar: "عاجل" };
-    case "semi_urgent": return { bg: "#fffbeb", border: "#fde68a", text: "#92400e", dot: "#f59e0b", label_en: "Semi-urgent", label_ar: "شبه عاجل" };
-    default:           return { bg: "#f0fdf4", border: "#bbf7d0", text: "#065f46", dot: "#22c55e", label_en: "Routine",     label_ar: "روتيني" };
+function categoryStyle(cat: string): { bg: string; border: string; text: string; dot: string; label_en: string; label_ar: string } {
+  switch (cat) {
+    case "immediate":   return { bg: "#fef2f2", border: "#fecaca", text: "#991b1b", dot: "#ef4444", label_en: "Immediate (1)",   label_ar: "فوري (1)" };
+    case "emergent":    return { bg: "#fff1e6", border: "#fdba8c", text: "#9a3412", dot: "#f97316", label_en: "Emergent (2)",    label_ar: "طارئ (2)" };
+    case "urgent":      return { bg: "#fffbeb", border: "#fde68a", text: "#92400e", dot: "#f59e0b", label_en: "Urgent (3)",      label_ar: "عاجل (3)" };
+    case "less_urgent": return { bg: "#eff6ff", border: "#bfdbfe", text: "#1e40af", dot: "#3b82f6", label_en: "Less Urgent (4)", label_ar: "أقل استعجالاً (4)" };
+    default:            return { bg: "#f0fdf4", border: "#bbf7d0", text: "#065f46", dot: "#22c55e", label_en: "Non-Urgent (5)",  label_ar: "غير عاجل (5)" };
   }
 }
 
-function vitalAlert(key: string, value: number): boolean {
-  switch (key) {
-    case "hr":   return value < 50 || value > 100;
-    case "spo2": return value < 95;
-    case "rr":   return value < 12 || value > 20;
-    case "pain": return value >= 7;
-    default:     return false;
-  }
+function riskColor(level: string | undefined): string {
+  if (level === "high") return "#ef4444";
+  if (level === "medium") return "#f59e0b";
+  return "#22c55e";
 }
-
-const EMPTY_FORM: TriageFormData = {
-  bp_systolic: "", bp_diastolic: "", hr: "", temp: "", spo2: "", rr: "", pain: "",
-  chief_complaint: "", triage_level: "routine", notes: "",
-};
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function TriagePage() {
-  const [patients, setPatients] = useState<TriagePatient[]>(MOCK_TRIAGE);
+  const { session, isAuthenticated } = useAuth();
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [assessed, setAssessed] = useState<AssessedItem[]>([]);
   const { locale: lang, setLocale: _setLangRaw } = usePreferences();
   const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
     _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
   const [loading, setLoading] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [form, setForm] = useState<TriageFormData>(EMPTY_FORM);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [selectedCheckinId, setSelectedCheckinId] = useState<string | null>(null);
+  const [form, setForm] = useState<FormData>(EMPTY_FORM);
   const [submitMsg, setSubmitMsg] = useState("");
-  const [filterLevel, setFilterLevel] = useState<string>("all");
+  const [filterCategory, setFilterCategory] = useState<string>("all");
 
-  useEffect(() => {
-    async function loadData() {
-      setLoading(true);
-      try {
-        const data = await apiFetch<TriageRaw[]>("/api/v1/clinic/triage/");
-        if (data && data.length > 0) {
-          const mapped: TriagePatient[] = data.map((item, idx) => ({
-            id: item.id,
-            patient_name: `${item.patient_detail?.first_name ?? "Patient"} ${item.patient_detail?.last_name ?? ""}`.trim(),
-            patient_name_ar: `${item.patient_detail?.first_name_ar ?? "مريض"} ${item.patient_detail?.last_name_ar ?? ""}`.trim(),
-            mrn: item.patient_detail?.mrn ?? `MRN-${String(idx).padStart(6, "0")}`,
-            dob: item.patient_detail?.date_of_birth ?? "N/A",
-            gender: item.patient_detail?.gender ?? "N/A",
-            arrival_time: item.arrival_time ? new Date(item.arrival_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--",
-            chief_complaint: item.chief_complaint ?? "",
-            chief_complaint_ar: item.chief_complaint ?? "",
-            triage_level: (item.triage_level ?? "routine") as TriagePatient["triage_level"],
-            vitals: {
-              bp: `${item.bp_systolic ?? "--"}/${item.bp_diastolic ?? "--"}`,
-              hr: item.heart_rate ?? 0,
-              temp: item.temperature ?? 0,
-              spo2: item.spo2 ?? 0,
-              rr: item.respiratory_rate ?? 0,
-              pain: item.pain_score ?? 0,
-            },
-            status: (item.status ?? "awaiting_triage") as TriagePatient["status"],
-            notes: item.notes ?? "",
-          }));
-          setPatients(mapped);
-        }
-      } catch (err) {
-        console.warn("Triage API unavailable, using mock data:", err);
-      } finally {
-        setLoading(false);
-      }
+  const loadData = useCallback(async () => {
+    if (!session) return;
+    setLoading(true);
+    setFetchError(null);
+    try {
+      const opts = { token: session.accessToken, tenantId: session.tenantId };
+      const [checkinPage, assessPage, patientPage] = await Promise.all([
+        apiFetch<Paginated<CheckInRaw>>("/api/v1/clinic/reception/checkins/", opts),
+        apiFetch<Paginated<TriageAssessmentRaw>>("/api/v1/clinic/triage/assessments/", opts),
+        apiFetch<Paginated<PatientRaw>>("/api/v1/patients/", opts),
+      ]);
+      const patientById = new Map(patientPage.results.map(p => [p.id, p]));
+      const assessedCheckinIds = new Set(assessPage.results.map(a => a.checkin));
+
+      const pending: QueueItem[] = checkinPage.results
+        .filter(c => !assessedCheckinIds.has(c.id))
+        .map(c => {
+          const patient = patientById.get(c.patient);
+          return {
+            checkinId: c.id,
+            patient_name: patient ? `${patient.first_name} ${patient.last_name}` : "Unknown patient",
+            mrn: patient?.mrn ?? "—",
+            checkin_time: c.checkin_time ? new Date(c.checkin_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--",
+          };
+        });
+      const checkinById = new Map(checkinPage.results.map(c => [c.id, c]));
+      const done: AssessedItem[] = assessPage.results.map(a => {
+        const checkin = checkinById.get(a.checkin);
+        const patient = checkin ? patientById.get(checkin.patient) : undefined;
+        return {
+          id: a.id,
+          patient_name: patient ? `${patient.first_name} ${patient.last_name}` : "Unknown patient",
+          mrn: patient?.mrn ?? "—",
+          assessed_at: a.assessed_at,
+          assessed_by: a.assessed_by,
+          chief_complaint: a.chief_complaint,
+          category: a.triage_category,
+          vitals: a.vital_signs,
+          risk: a.risk_score,
+        };
+      }).sort((x, y) => new Date(y.assessed_at).getTime() - new Date(x.assessed_at).getTime());
+
+      setQueue(pending);
+      setAssessed(done);
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load triage data."));
+    } finally {
+      setLoading(false);
     }
-    void loadData();
-  }, []);
+  }, [session]);
 
-  const selectedPatient = patients.find(p => p.id === selectedId) ?? null;
+  useEffect(() => { void loadData(); }, [loadData]);
 
-  const handleSelect = (p: TriagePatient) => {
-    setSelectedId(p.id);
-    setForm({
-      bp_systolic: p.vitals.bp.split("/")[0] ?? "",
-      bp_diastolic: p.vitals.bp.split("/")[1] ?? "",
-      hr: String(p.vitals.hr),
-      temp: String(p.vitals.temp),
-      spo2: String(p.vitals.spo2),
-      rr: String(p.vitals.rr),
-      pain: String(p.vitals.pain),
-      chief_complaint: p.chief_complaint,
-      triage_level: p.triage_level,
-      notes: p.notes,
-    });
+  const handleSelect = (item: QueueItem) => {
+    setSelectedCheckinId(item.checkinId);
+    setForm(EMPTY_FORM);
     setSubmitMsg("");
   };
 
   const handleSubmit = async () => {
-    if (!selectedId) return;
-    const payload = {
-      bp_systolic: Number(form.bp_systolic),
-      bp_diastolic: Number(form.bp_diastolic),
-      heart_rate: Number(form.hr),
-      temperature: Number(form.temp),
-      spo2: Number(form.spo2),
-      respiratory_rate: Number(form.rr),
-      pain_score: Number(form.pain),
-      chief_complaint: form.chief_complaint,
-      triage_level: form.triage_level,
-      notes: form.notes,
-      status: "triaged",
-    };
+    if (!session || !selectedCheckinId) return;
+    const num = (v: string) => (v.trim() === "" ? null : Number(v));
     try {
-      await apiFetch(`/api/v1/clinic/triage/${selectedId}/`, { method: "PATCH", body: JSON.stringify(payload) });
-    } catch { /* silent */ }
-    setPatients(prev => prev.map(p => p.id === selectedId ? {
-      ...p,
-      triage_level: form.triage_level,
-      vitals: {
-        bp: `${form.bp_systolic}/${form.bp_diastolic}`,
-        hr: Number(form.hr),
-        temp: Number(form.temp),
-        spo2: Number(form.spo2),
-        rr: Number(form.rr),
-        pain: Number(form.pain),
-      },
-      chief_complaint: form.chief_complaint,
-      notes: form.notes,
-      status: "triaged",
-    } : p));
-    setSubmitMsg(lang === "en" ? "Triage assessment saved successfully." : "تم حفظ تقييم الفرز بنجاح.");
-    setTimeout(() => { setSubmitMsg(""); setSelectedId(null); setForm(EMPTY_FORM); }, 3500);
+      await apiFetch("/api/v1/clinic/triage/assessments/", {
+        method: "POST",
+        body: JSON.stringify({
+          checkin: selectedCheckinId,
+          chief_complaint: form.chief_complaint,
+          triage_category: form.triage_category,
+          vital_signs: {
+            weight_kg: num(form.weight_kg),
+            height_cm: num(form.height_cm),
+            temperature_c: num(form.temperature_c),
+            blood_pressure_systolic: num(form.bp_systolic),
+            blood_pressure_diastolic: num(form.bp_diastolic),
+            pulse_bpm: num(form.pulse),
+            respiratory_rate_pm: num(form.rr),
+            oxygen_saturation_pct: num(form.spo2),
+            pain_score: Number(form.pain) || 0,
+          },
+        }),
+        token: session.accessToken,
+        tenantId: session.tenantId,
+      });
+      setSubmitMsg(lang === "en" ? "Triage assessment saved." : "تم حفظ تقييم الفرز.");
+      setSelectedCheckinId(null);
+      setForm(EMPTY_FORM);
+      await loadData();
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setSubmitMsg(detail || (lang === "en" ? "Failed to save assessment." : "فشل حفظ التقييم."));
+    }
+    setTimeout(() => setSubmitMsg(""), 3500);
   };
 
-  const countByLevel = {
-    urgent:     patients.filter(p => p.triage_level === "urgent"    && p.status !== "in_consultation").length,
-    semi_urgent: patients.filter(p => p.triage_level === "semi_urgent" && p.status !== "in_consultation").length,
-    routine:    patients.filter(p => p.triage_level === "routine"   && p.status !== "in_consultation").length,
-  };
-
-  const filtered = patients.filter(p => filterLevel === "all" || p.triage_level === filterLevel);
+  const filteredAssessed = filterCategory === "all" ? assessed : assessed.filter(a => a.category === filterCategory);
   const dir = lang === "ar" ? "rtl" : "ltr";
 
   const fieldLabelCls = "mb-1.5 block text-[13px] font-semibold text-ink/50";
   const fieldInputCls = "w-full rounded-lg border border-ink/10 bg-surface px-3.5 py-2.5 text-sm text-ink";
+
+  if (!isAuthenticated) {
+    return <div className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold">Sign in required</h1></div>;
+  }
+  if (fetchError) {
+    return (
+      <div role="alert" className="mx-auto mt-16 max-w-lg text-center">
+        <h1 className="text-xl font-bold text-red-400">
+          {lang === "en" ? "Unable to load triage data" : "تعذر تحميل بيانات الفرز"}
+        </h1>
+        <p className="mt-1 text-sm text-ink/50">{fetchError}</p>
+        <button onClick={() => void loadData()} className="cy-btn cy-btn-ghost mt-4 !min-h-0 !py-2 !px-4 text-sm">
+          {lang === "en" ? "Retry" : "إعادة المحاولة"}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div dir={dir} className="mx-auto max-w-6xl">
@@ -280,7 +227,7 @@ export default function TriagePage() {
             {lang === "en" ? "Triage Assessment" : "تقييم الفرز الطبي"}
           </h1>
           <p className="mt-1 text-sm text-ink/50">
-            {lang === "en" ? "Assess and prioritize patients by urgency" : "تقييم المرضى وترتيب أولوياتهم حسب الحاجة"}
+            {lang === "en" ? "Assess checked-in patients and record vitals" : "تقييم المرضى المسجلين وتسجيل العلامات الحيوية"}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -305,48 +252,69 @@ export default function TriagePage() {
         ))}
       </nav>
 
-      {/* Triage level summary */}
-      <div className="mb-8 grid grid-cols-3 gap-4">
-        {(["urgent", "semi_urgent", "routine"] as const).map(level => {
-          const ts = triageStyle(level);
-          return (
-            <div
-              key={level}
-              onClick={() => setFilterLevel(filterLevel === level ? "all" : level)}
-              className="cursor-pointer rounded-xl border-2 p-5 text-center"
-              style={{ background: ts.bg, borderColor: ts.border }}
-            >
-              <div className="mx-auto mb-2 h-3.5 w-3.5 rounded-full" style={{ background: ts.dot }} />
-              <p className="text-3xl font-bold" style={{ color: ts.text }}>{countByLevel[level]}</p>
-              <p className="mt-1.5 text-sm font-bold" style={{ color: ts.text }}>
-                {lang === "en" ? ts.label_en : ts.label_ar}
-              </p>
-            </div>
-          );
-        })}
+      {/* Summary */}
+      <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <div className="cy-card p-5 text-center">
+          <p className="text-3xl font-bold" style={{ color: "#f59e0b" }}>{queue.length}</p>
+          <p className="mt-1.5 text-sm font-bold text-ink/50">{lang === "en" ? "Awaiting Triage" : "بانتظار الفرز"}</p>
+        </div>
+        <div className="cy-card p-5 text-center">
+          <p className="text-3xl font-bold" style={{ color: "#22c55e" }}>{assessed.length}</p>
+          <p className="mt-1.5 text-sm font-bold text-ink/50">{lang === "en" ? "Triaged" : "تم فرزهم"}</p>
+        </div>
+        <div className="cy-card p-5 text-center">
+          <p className="text-3xl font-bold" style={{ color: "#ef4444" }}>{assessed.filter(a => a.risk?.abnormal_flag).length}</p>
+          <p className="mt-1.5 text-sm font-bold text-ink/50">{lang === "en" ? "Abnormal MEWS" : "MEWS غير طبيعي"}</p>
+        </div>
       </div>
 
       {/* Main two-column layout */}
       <div className="grid grid-cols-[1fr_420px] items-start gap-6">
 
-        {/* LEFT — Triage queue */}
+        {/* LEFT — Queue + assessed list */}
         <div>
+          <h2 className="mb-4 text-lg font-bold">
+            {lang === "en" ? "Awaiting Triage" : "بانتظار الفرز"}
+          </h2>
+          <div className="mb-8 flex flex-col gap-3">
+            {queue.map(item => (
+              <div
+                key={item.checkinId}
+                onClick={() => handleSelect(item)}
+                className={`cursor-pointer rounded-xl p-4 ${selectedCheckinId === item.checkinId ? "border-2 border-brand-400 shadow-[0_0_0_3px_rgba(34,211,238,0.15)]" : "border border-ink/10 bg-surface"}`}
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm font-bold">{item.patient_name}</span>
+                    <span className="ml-2 font-mono text-xs text-ink/50">{item.mrn}</span>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-ink/50">{lang === "en" ? "Checked in" : "وصل"}</div>
+                    <div className="text-sm font-bold text-brand-400">{item.checkin_time}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {queue.length === 0 && (
+              <div className="cy-card p-8 text-center text-sm text-ink/40">
+                {lang === "en" ? "No patients awaiting triage." : "لا يوجد مرضى بانتظار الفرز."}
+              </div>
+            )}
+          </div>
+
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-bold">
-              {lang === "en" ? "Patients Awaiting Triage" : "المرضى بانتظار الفرز"}
-            </h2>
-            <div className="flex gap-2">
-              {(["all", "urgent", "semi_urgent", "routine"] as const).map(f => {
-                const ts = triageStyle(f === "all" ? "routine" : f);
-                const activeColor = f === "urgent" ? "#ef4444" : f === "semi_urgent" ? "#f59e0b" : f === "routine" ? "#22c55e" : "#22D3EE";
+            <h2 className="text-lg font-bold">{lang === "en" ? "Triaged" : "تم فرزهم"}</h2>
+            <div className="flex flex-wrap gap-2">
+              {(["all", "immediate", "emergent", "urgent", "less_urgent", "non_urgent"] as const).map(f => {
+                const cs = categoryStyle(f === "all" ? "non_urgent" : f);
                 return (
                   <button
                     key={f}
-                    onClick={() => setFilterLevel(f)}
+                    onClick={() => setFilterCategory(f)}
                     className="rounded-md border border-ink/10 px-2.5 py-1.5 text-xs font-semibold"
-                    style={filterLevel === f ? { background: activeColor, color: "#fff", borderColor: activeColor } : { background: "var(--color-surface)", color: "var(--color-text)" }}
+                    style={filterCategory === f ? { background: cs.dot, color: "#fff", borderColor: cs.dot } : { background: "var(--color-surface)", color: "var(--color-text)" }}
                   >
-                    {f === "all" ? (lang === "en" ? "All" : "الكل") : (lang === "en" ? ts.label_en : ts.label_ar)}
+                    {f === "all" ? (lang === "en" ? "All" : "الكل") : (lang === "en" ? cs.label_en : cs.label_ar)}
                   </button>
                 );
               })}
@@ -354,82 +322,65 @@ export default function TriagePage() {
           </div>
 
           <div className="flex flex-col gap-3">
-            {filtered.map(p => {
-              const ts = triageStyle(p.triage_level);
-              const isSelected = p.id === selectedId;
+            {filteredAssessed.map(a => {
+              const cs = categoryStyle(a.category);
               return (
-                <div
-                  key={p.id}
-                  onClick={() => handleSelect(p)}
-                  className={`cursor-pointer rounded-xl p-4 ${isSelected ? "border-2 border-brand-400 shadow-[0_0_0_3px_rgba(34,211,238,0.15)]" : "border border-ink/10 bg-surface"}`}
-                  style={{ borderLeft: `4px solid ${ts.dot}` }}
-                >
+                <div key={a.id} className="rounded-xl border border-ink/10 bg-surface p-4" style={{ borderLeft: `4px solid ${cs.dot}` }}>
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <div className="mb-1 flex items-center gap-2.5">
-                        <span className="text-sm font-bold">
-                          {lang === "ar" ? p.patient_name_ar : p.patient_name}
-                        </span>
-                        <span className="font-mono text-xs text-ink/50">{p.mrn}</span>
-                        <span className="rounded-full px-2.5 py-0.5 text-xs font-bold" style={{ background: ts.bg, color: ts.text, border: `1px solid ${ts.border}` }}>
-                          {lang === "en" ? ts.label_en : ts.label_ar}
+                        <span className="text-sm font-bold">{a.patient_name}</span>
+                        <span className="font-mono text-xs text-ink/50">{a.mrn}</span>
+                        <span className="rounded-full px-2.5 py-0.5 text-xs font-bold" style={{ background: cs.bg, color: cs.text, border: `1px solid ${cs.border}` }}>
+                          {lang === "en" ? cs.label_en : cs.label_ar}
                         </span>
                       </div>
-                      <p className="mb-2 text-sm italic text-ink/50">
-                        {lang === "ar" ? p.chief_complaint_ar : p.chief_complaint}
-                      </p>
+                      <p className="mb-2 text-sm italic text-ink/50">{a.chief_complaint}</p>
                     </div>
                     <div className="text-right">
-                      <div className="text-xs text-ink/50">{lang === "en" ? "Arrived" : "وصل"}</div>
-                      <div className="text-sm font-bold text-brand-400">{p.arrival_time}</div>
+                      <div className="text-xs text-ink/50">{a.assessed_by}</div>
+                      <div className="text-sm font-bold text-brand-400">
+                        {new Date(a.assessed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Vitals strip */}
-                  <div className="mt-2 flex flex-wrap gap-4">
-                    {[
-                      { key: "bp",   label: "BP",    value: p.vitals.bp,   unit: "mmHg", num: 0 },
-                      { key: "hr",   label: "HR",    value: p.vitals.hr,   unit: "bpm",  num: p.vitals.hr },
-                      { key: "temp", label: "Temp",  value: p.vitals.temp, unit: "°C",   num: 0 },
-                      { key: "spo2", label: "SpO₂",  value: p.vitals.spo2, unit: "%",    num: p.vitals.spo2 },
-                      { key: "rr",   label: "RR",    value: p.vitals.rr,   unit: "/min", num: p.vitals.rr },
-                      { key: "pain", label: lang === "en" ? "Pain" : "الألم", value: p.vitals.pain, unit: "/10", num: p.vitals.pain },
-                    ].map(v => {
-                      const alert = vitalAlert(v.key, v.num);
-                      return (
-                        <div key={v.key} className="min-w-[54px] text-center">
+                  {a.vitals && (
+                    <div className="mt-2 flex flex-wrap gap-4">
+                      {[
+                        { label: "BP",   value: `${a.vitals.blood_pressure_systolic ?? "--"}/${a.vitals.blood_pressure_diastolic ?? "--"}`, unit: "mmHg" },
+                        { label: "HR",   value: a.vitals.pulse_bpm ?? "--",                unit: "bpm" },
+                        { label: "Temp", value: a.vitals.temperature_c ?? "--",            unit: "°C" },
+                        { label: "SpO₂", value: a.vitals.oxygen_saturation_pct ?? "--",     unit: "%" },
+                        { label: "RR",   value: a.vitals.respiratory_rate_pm ?? "--",       unit: "/min" },
+                        { label: lang === "en" ? "Pain" : "الألم", value: a.vitals.pain_score, unit: "/10" },
+                      ].map(v => (
+                        <div key={v.label} className="min-w-[54px] text-center">
                           <div className="text-[11px] uppercase tracking-wide text-ink/50">{v.label}</div>
-                          <div className={`text-sm font-bold ${alert ? "text-red-400" : "text-ink"}`}>
-                            {v.value}
-                            <span className="ml-0.5 text-[11px] font-normal text-ink/50">{v.unit}</span>
+                          <div className="text-sm font-bold">{v.value}<span className="ml-0.5 text-[11px] font-normal text-ink/50">{v.unit}</span></div>
+                        </div>
+                      ))}
+                      {a.risk && (
+                        <div className="ml-auto self-center text-right">
+                          <div className="text-[11px] uppercase tracking-wide text-ink/50">MEWS</div>
+                          <div className="text-sm font-bold" style={{ color: riskColor(a.risk.risk_level) }}>
+                            {a.risk.mews_score} · {a.risk.risk_level}
                           </div>
                         </div>
-                      );
-                    })}
-                    <div className="ml-auto self-center">
-                      {p.status === "awaiting_triage" && (
-                        <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-800">
-                          {lang === "en" ? "Awaiting Triage" : "بانتظار الفرز"}
-                        </span>
-                      )}
-                      {p.status === "triaged" && (
-                        <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
-                          {lang === "en" ? "Triaged" : "تم الفرز"}
-                        </span>
-                      )}
-                      {p.status === "in_consultation" && (
-                        <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-bold text-blue-800">
-                          {lang === "en" ? "In Consultation" : "في الاستشارة"}
-                        </span>
                       )}
                     </div>
-                  </div>
+                  )}
+                  {a.risk?.ai_risk_assessment && (
+                    <div className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-400">
+                      {a.risk.ai_risk_assessment}
+                    </div>
+                  )}
                 </div>
               );
             })}
-            {filtered.length === 0 && (
-              <div className="cy-card p-10 text-center text-sm text-ink/50">
-                {lang === "en" ? "No patients in this triage level." : "لا يوجد مرضى في هذا مستوى الفرز."}
+            {filteredAssessed.length === 0 && (
+              <div className="cy-card p-8 text-center text-sm text-ink/40">
+                {lang === "en" ? "No triaged patients in this category." : "لا يوجد مرضى تم فرزهم في هذه الفئة."}
               </div>
             )}
           </div>
@@ -440,9 +391,11 @@ export default function TriagePage() {
           <h2 className="mb-1 text-lg font-bold text-brand-400">
             {lang === "en" ? "Triage Assessment Form" : "نموذج تقييم الفرز"}
           </h2>
-          {selectedPatient ? (
+          {selectedCheckinId ? (
             <p className="mb-5 text-sm text-ink/50">
-              {lang === "en" ? `Patient: ${selectedPatient.patient_name} · ${selectedPatient.mrn}` : `المريض: ${selectedPatient.patient_name_ar} · ${selectedPatient.mrn}`}
+              {lang === "en"
+                ? `Patient: ${queue.find(q => q.checkinId === selectedCheckinId)?.patient_name ?? ""}`
+                : `المريض: ${queue.find(q => q.checkinId === selectedCheckinId)?.patient_name ?? ""}`}
             </p>
           ) : (
             <p className="mb-5 text-sm text-ink/50">
@@ -456,7 +409,6 @@ export default function TriagePage() {
             </div>
           )}
 
-          {/* Chief complaint */}
           <div className="mb-4">
             <label className={fieldLabelCls}>
               {lang === "en" ? "Chief Complaint" : "الشكوى الرئيسية"}
@@ -464,119 +416,73 @@ export default function TriagePage() {
             <textarea
               value={form.chief_complaint}
               onChange={e => setForm(f => ({ ...f, chief_complaint: e.target.value }))}
-              disabled={!selectedId}
+              disabled={!selectedCheckinId}
               rows={2}
               className={`${fieldInputCls} resize-y`}
             />
           </div>
 
-          {/* Vitals */}
           <p className="mb-3 text-[13px] font-semibold text-ink/50">
             {lang === "en" ? "Vital Signs" : "العلامات الحيوية"}
           </p>
           <div className="mb-4 grid grid-cols-2 gap-3">
-            <div>
-              <label className={fieldLabelCls}>
-                {lang === "en" ? "BP Systolic (mmHg)" : "الضغط الانقباضي (ملم/زئبق)"}
-              </label>
-              <input type="number" value={form.bp_systolic} onChange={e => setForm(f => ({ ...f, bp_systolic: e.target.value }))} disabled={!selectedId} min={50} max={250}
-                className={fieldInputCls} />
-            </div>
-            <div>
-              <label className={fieldLabelCls}>
-                {lang === "en" ? "BP Diastolic (mmHg)" : "الضغط الانبساطي (ملم/زئبق)"}
-              </label>
-              <input type="number" value={form.bp_diastolic} onChange={e => setForm(f => ({ ...f, bp_diastolic: e.target.value }))} disabled={!selectedId} min={30} max={150}
-                className={fieldInputCls} />
-            </div>
-            <div>
-              <label className={fieldLabelCls}>
-                {lang === "en" ? "Heart Rate (bpm)" : "معدل القلب (نبضة/دقيقة)"}
-              </label>
-              <input type="number" value={form.hr} onChange={e => setForm(f => ({ ...f, hr: e.target.value }))} disabled={!selectedId} min={30} max={250}
-                className={fieldInputCls}
-                style={vitalAlert("hr", Number(form.hr)) ? { borderColor: "#ef4444", color: "#ef4444", fontWeight: 700 } : undefined} />
-            </div>
-            <div>
-              <label className={fieldLabelCls}>
-                {lang === "en" ? "Temperature (°C)" : "الحرارة (°س)"}
-              </label>
-              <input type="number" value={form.temp} onChange={e => setForm(f => ({ ...f, temp: e.target.value }))} disabled={!selectedId} min={34} max={42} step={0.1}
-                className={fieldInputCls} />
-            </div>
-            <div>
-              <label className={fieldLabelCls}>
-                {lang === "en" ? "SpO₂ (%)" : "تشبع الأكسجين (%)"}
-              </label>
-              <input type="number" value={form.spo2} onChange={e => setForm(f => ({ ...f, spo2: e.target.value }))} disabled={!selectedId} min={70} max={100}
-                className={fieldInputCls}
-                style={vitalAlert("spo2", Number(form.spo2)) ? { borderColor: "#ef4444", color: "#ef4444", fontWeight: 700 } : undefined} />
-            </div>
-            <div>
-              <label className={fieldLabelCls}>
-                {lang === "en" ? "Resp. Rate (/min)" : "معدل التنفس (في الدقيقة)"}
-              </label>
-              <input type="number" value={form.rr} onChange={e => setForm(f => ({ ...f, rr: e.target.value }))} disabled={!selectedId} min={8} max={40}
-                className={fieldInputCls}
-                style={vitalAlert("rr", Number(form.rr)) ? { borderColor: "#ef4444", color: "#ef4444", fontWeight: 700 } : undefined} />
-            </div>
+            {[
+              { key: "weight_kg" as const, label_en: "Weight (kg)", label_ar: "الوزن (كغ)" },
+              { key: "height_cm" as const, label_en: "Height (cm)", label_ar: "الطول (سم)" },
+              { key: "bp_systolic" as const, label_en: "BP Systolic (mmHg)", label_ar: "الضغط الانقباضي" },
+              { key: "bp_diastolic" as const, label_en: "BP Diastolic (mmHg)", label_ar: "الضغط الانبساطي" },
+              { key: "pulse" as const, label_en: "Pulse (bpm)", label_ar: "النبض" },
+              { key: "temperature_c" as const, label_en: "Temperature (°C)", label_ar: "الحرارة (°س)" },
+              { key: "spo2" as const, label_en: "SpO₂ (%)", label_ar: "تشبع الأكسجين (%)" },
+              { key: "rr" as const, label_en: "Resp. Rate (/min)", label_ar: "معدل التنفس" },
+            ].map(field => (
+              <div key={field.key}>
+                <label className={fieldLabelCls}>{lang === "en" ? field.label_en : field.label_ar}</label>
+                <input
+                  type="number"
+                  value={form[field.key]}
+                  onChange={e => setForm(f => ({ ...f, [field.key]: e.target.value }))}
+                  disabled={!selectedCheckinId}
+                  className={fieldInputCls}
+                />
+              </div>
+            ))}
           </div>
 
-          {/* Pain score */}
           <div className="mb-4">
             <label className="mb-1.5 block text-[13px] font-semibold uppercase text-ink/50">
               {lang === "en" ? `Pain Score: ${form.pain}/10` : `درجة الألم: ${form.pain}/10`}
             </label>
-            <input type="range" min={0} max={10} value={form.pain} onChange={e => setForm(f => ({ ...f, pain: e.target.value }))} disabled={!selectedId}
+            <input type="range" min={0} max={10} value={form.pain} onChange={e => setForm(f => ({ ...f, pain: e.target.value }))} disabled={!selectedCheckinId}
               className="w-full" style={{ accentColor: Number(form.pain) >= 7 ? "#ef4444" : Number(form.pain) >= 4 ? "#f59e0b" : "#22c55e" }} />
-            <div className="flex justify-between text-xs text-ink/50">
-              <span>{lang === "en" ? "No pain" : "لا ألم"}</span>
-              <span className="font-bold text-red-400">{lang === "en" ? "Worst pain" : "أشد ألم"}</span>
-            </div>
           </div>
 
-          {/* Triage level */}
-          <div className="mb-4">
+          <div className="mb-6">
             <label className={fieldLabelCls}>
-              {lang === "en" ? "Triage Level" : "مستوى الفرز"}
+              {lang === "en" ? "Triage Category (ESI-style, 1–5)" : "فئة الفرز"}
             </label>
-            <div className="flex gap-2">
-              {(["urgent", "semi_urgent", "routine"] as const).map(level => {
-                const ts = triageStyle(level);
-                const isActive = form.triage_level === level;
+            <div className="grid grid-cols-1 gap-1.5">
+              {(["immediate", "emergent", "urgent", "less_urgent", "non_urgent"] as const).map(cat => {
+                const cs = categoryStyle(cat);
+                const isActive = form.triage_category === cat;
                 return (
                   <button
-                    key={level}
-                    onClick={() => selectedId && setForm(f => ({ ...f, triage_level: level }))}
-                    disabled={!selectedId}
-                    className={`flex-1 rounded-lg border px-1.5 py-2 text-xs font-bold ${!selectedId ? "opacity-50" : ""} ${selectedId ? "cursor-pointer" : "cursor-not-allowed"}`}
-                    style={{ background: isActive ? ts.dot : "var(--color-surface)", color: isActive ? "#fff" : ts.text, borderColor: isActive ? ts.dot : "var(--color-border)" }}
+                    key={cat}
+                    onClick={() => selectedCheckinId && setForm(f => ({ ...f, triage_category: cat }))}
+                    disabled={!selectedCheckinId}
+                    className="rounded-lg border px-2 py-2 text-left text-xs font-bold"
+                    style={{ background: isActive ? cs.dot : "var(--color-surface)", color: isActive ? "#fff" : cs.text, borderColor: isActive ? cs.dot : "var(--color-border)" }}
                   >
-                    {lang === "en" ? ts.label_en : ts.label_ar}
+                    {lang === "en" ? cs.label_en : cs.label_ar}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* Notes */}
-          <div className="mb-5">
-            <label className={fieldLabelCls}>
-              {lang === "en" ? "Clinical Notes" : "الملاحظات السريرية"}
-            </label>
-            <textarea
-              value={form.notes}
-              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-              disabled={!selectedId}
-              rows={3}
-              placeholder={lang === "en" ? "Observations, allergies, relevant history..." : "الملاحظات والحساسية والتاريخ المرضي..."}
-              className={`${fieldInputCls} resize-y`}
-            />
-          </div>
-
           <button
             onClick={() => { void handleSubmit(); }}
-            disabled={!selectedId}
+            disabled={!selectedCheckinId}
             className="cy-btn cy-btn-primary w-full disabled:cursor-not-allowed disabled:opacity-50"
           >
             {lang === "en" ? "Save Triage Assessment" : "حفظ تقييم الفرز"}

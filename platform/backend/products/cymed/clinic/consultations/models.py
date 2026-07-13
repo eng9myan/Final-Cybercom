@@ -5,6 +5,8 @@ from products.cymed.core.encounters.models import Encounter
 
 
 class Consultation(BaseModel):
+    data_classification = "phi"
+
     encounter = models.ForeignKey(
         Encounter, on_delete=models.CASCADE, related_name="clinic_consultations"
     )
@@ -20,6 +22,8 @@ class Consultation(BaseModel):
 
 
 class ConsultationDiagnosis(BaseModel):
+    data_classification = "phi"
+
     consultation = models.ForeignKey(
         Consultation, on_delete=models.CASCADE, related_name="diagnoses"
     )
@@ -33,6 +37,8 @@ class ConsultationDiagnosis(BaseModel):
 
 
 class ConsultationProcedure(BaseModel):
+    data_classification = "phi"
+
     consultation = models.ForeignKey(
         Consultation, on_delete=models.CASCADE, related_name="procedures"
     )
@@ -46,6 +52,8 @@ class ConsultationProcedure(BaseModel):
 
 
 class ConsultationPlan(BaseModel):
+    data_classification = "phi"
+
     consultation = models.OneToOneField(
         Consultation, on_delete=models.CASCADE, related_name="treatment_plan"
     )
@@ -57,6 +65,8 @@ class ConsultationPlan(BaseModel):
 
 
 class ConsultationFollowUp(BaseModel):
+    data_classification = "phi"
+
     consultation = models.ForeignKey(
         Consultation, on_delete=models.CASCADE, related_name="follow_ups"
     )
@@ -68,6 +78,8 @@ class ConsultationFollowUp(BaseModel):
 
 
 class ConsultationAttachment(BaseModel):
+    data_classification = "phi"
+
     consultation = models.ForeignKey(
         Consultation, on_delete=models.CASCADE, related_name="attachments"
     )

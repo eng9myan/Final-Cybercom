@@ -5,6 +5,8 @@ from products.cymed.clinic.reception.models import CheckIn
 
 
 class TriageAssessment(BaseModel):
+    data_classification = "phi"
+
     checkin = models.ForeignKey(
         CheckIn, on_delete=models.CASCADE, related_name="triage_assessments"
     )
@@ -28,6 +30,8 @@ class TriageAssessment(BaseModel):
 
 
 class TriageVitalSigns(BaseModel):
+    data_classification = "phi"
+
     assessment = models.OneToOneField(
         TriageAssessment, on_delete=models.CASCADE, related_name="vital_signs"
     )
@@ -47,6 +51,8 @@ class TriageVitalSigns(BaseModel):
 
 
 class TriageRiskScore(BaseModel):
+    data_classification = "phi"
+
     assessment = models.OneToOneField(
         TriageAssessment, on_delete=models.CASCADE, related_name="risk_score"
     )

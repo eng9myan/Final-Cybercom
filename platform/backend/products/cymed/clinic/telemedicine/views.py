@@ -53,6 +53,8 @@ class VirtualVisitViewSet(ClinicModelViewSet):
             },
         )
 
+        self._audit("UPDATE", str(visit.id), outcome_description="telemedicine session started")
+
         return Response(self.get_serializer(visit).data, status=status.HTTP_200_OK)
 
 
