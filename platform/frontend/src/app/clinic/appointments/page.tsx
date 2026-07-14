@@ -219,20 +219,6 @@ export default function AppointmentsPage() {
         </div>
       </header>
 
-      {/* Sibling navigation */}
-      <nav className="mb-8 flex flex-wrap gap-2.5">
-        {[
-          { href: "/clinic/reception",     label: lang === "en" ? "Reception"     : "الاستقبال" },
-          { href: "/clinic/triage",        label: lang === "en" ? "Triage"        : "الفرز" },
-          { href: "/clinic/consultations", label: lang === "en" ? "Consultations" : "الاستشارات" },
-          { href: "/clinic/telemedicine",  label: lang === "en" ? "Telemedicine"  : "التطبيب عن بُعد" },
-        ].map(n => (
-          <a key={n.href} href={n.href} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
-            {n.label}
-          </a>
-        ))}
-      </nav>
-
       {/* Action feedback */}
       {actionMsg && (
         <div className="mb-4 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-5 py-3 text-sm font-semibold text-emerald-400">

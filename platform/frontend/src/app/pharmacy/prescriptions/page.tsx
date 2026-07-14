@@ -78,6 +78,20 @@ export default function PrescriptionsPage() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [showNewRx, setShowNewRx] = useState(false);
+  const [rxPatient, setRxPatient] = useState("");
+  const [rxPriority, setRxPriority] = useState<"routine" | "urgent" | "stat">("routine");
+  const [rxDrugName, setRxDrugName] = useState("");
+  const [rxDrugCode, setRxDrugCode] = useState("");
+  const [rxDose, setRxDose] = useState("");
+  const [rxDoseUnit, setRxDoseUnit] = useState("mg");
+  const [rxRoute, setRxRoute] = useState("Oral");
+  const [rxFrequency, setRxFrequency] = useState("");
+  const [rxQuantity, setRxQuantity] = useState("");
+  const [rxQuantityUnit, setRxQuantityUnit] = useState("tablet");
+  const [rxSig, setRxSig] = useState("");
+  const [rxCreating, setRxCreating] = useState(false);
+  const [rxMsg, setRxMsg] = useState("");
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -148,6 +162,56 @@ export default function PrescriptionsPage() {
     }
   }
 
+  async function handleCreatePrescription() {
+    if (!session) return;
+    if (!rxPatient || !rxDrugName.trim() || !rxDose.trim() || !rxFrequency.trim() || !rxQuantity.trim() || !rxSig.trim()) {
+      setRxMsg(lang === "en" ? "Fill in patient and all medication fields." : "املأ المريض وجميع حقول الدواء.");
+      return;
+    }
+    setRxCreating(true);
+    setRxMsg("");
+    try {
+      const rx = await apiFetch<{ id: string; prescription_number: string }>("/api/v1/pharmacy/prescriptions/rx/", {
+        method: "POST",
+        token: session.accessToken,
+        tenantId: session.tenantId,
+        body: JSON.stringify({
+          patient_id: rxPatient,
+          prescriber_id: session.userId,
+          prescription_type: "outpatient",
+          status: "pending",
+          priority: rxPriority,
+        }),
+      });
+      await apiFetch("/api/v1/pharmacy/prescriptions/items/", {
+        method: "POST",
+        token: session.accessToken,
+        tenantId: session.tenantId,
+        body: JSON.stringify({
+          prescription: rx.id,
+          drug_code: rxDrugCode || rxDrugName.toUpperCase().replace(/\s+/g, "-"),
+          drug_name: rxDrugName,
+          dose: rxDose,
+          dose_unit: rxDoseUnit,
+          route: rxRoute,
+          frequency: rxFrequency,
+          quantity: rxQuantity,
+          quantity_unit: rxQuantityUnit,
+          sig: rxSig,
+        }),
+      });
+      setRxMsg(lang === "en" ? `Prescription ${rx.prescription_number} created.` : `تم إنشاء الوصفة ${rx.prescription_number}.`);
+      setRxPatient(""); setRxDrugName(""); setRxDrugCode(""); setRxDose(""); setRxFrequency(""); setRxQuantity(""); setRxSig("");
+      setShowNewRx(false);
+      void loadData();
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setRxMsg(detail || (err instanceof Error ? err.message : "Failed to create prescription."));
+    } finally {
+      setRxCreating(false);
+    }
+  }
+
   const dir = lang === "ar" ? "rtl" : "ltr";
 
   if (!isAuthenticated) {
@@ -182,10 +246,78 @@ export default function PrescriptionsPage() {
             {lang === "en" ? "Real inpatient medication orders (CPOE-fed) — review, verify, and manage" : "طلبات الأدوية الحقيقية للمرضى الداخليين — مراجعة والتحقق والإدارة"}
           </p>
         </div>
-        <button onClick={() => setLang(l => l === "en" ? "ar" : "en")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
-          {lang === "en" ? "العربية" : "English"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setShowNewRx(s => !s)} className="cy-btn cy-btn-primary !min-h-0 !py-2 !px-4 text-sm">
+            {showNewRx ? (lang === "en" ? "Close" : "إغلاق") : (lang === "en" ? "+ New Prescription" : "+ وصفة جديدة")}
+          </button>
+          <button onClick={() => setLang(l => l === "en" ? "ar" : "en")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+            {lang === "en" ? "العربية" : "English"}
+          </button>
+        </div>
       </header>
+
+      {showNewRx && (
+        <div className="cy-card mb-8 p-5">
+          <h2 className="mb-4 text-sm font-bold text-brand-400">
+            {lang === "en" ? "New Prescription (outpatient, originated by Pharmacy)" : "وصفة جديدة (سرير خارجي، من الصيدلية)"}
+          </h2>
+          {rxMsg && (
+            <div className="mb-4 rounded-lg border border-brand-400/40 bg-brand-500/10 px-4 py-2.5 text-sm">{rxMsg}</div>
+          )}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{lang === "en" ? "Patient" : "المريض"}</label>
+              <select value={rxPatient} onChange={e => setRxPatient(e.target.value)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink">
+                <option value="">{lang === "en" ? "Select patient…" : "اختر مريضاً…"}</option>
+                {Object.values(patients).map(p => (
+                  <option key={p.id} value={p.id}>{p.first_name} {p.last_name} — {p.mrn}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{lang === "en" ? "Priority" : "الأولوية"}</label>
+              <select value={rxPriority} onChange={e => setRxPriority(e.target.value as typeof rxPriority)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink">
+                {(["routine", "urgent", "stat"] as const).map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{lang === "en" ? "Drug Name" : "اسم الدواء"}</label>
+              <input type="text" value={rxDrugName} onChange={e => setRxDrugName(e.target.value)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{lang === "en" ? "Dose" : "الجرعة"}</label>
+              <input type="text" value={rxDose} onChange={e => setRxDose(e.target.value)} placeholder="500" className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{lang === "en" ? "Dose Unit" : "وحدة الجرعة"}</label>
+              <input type="text" value={rxDoseUnit} onChange={e => setRxDoseUnit(e.target.value)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{lang === "en" ? "Route" : "طريقة الإعطاء"}</label>
+              <input type="text" value={rxRoute} onChange={e => setRxRoute(e.target.value)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{lang === "en" ? "Frequency" : "التكرار"}</label>
+              <input type="text" value={rxFrequency} onChange={e => setRxFrequency(e.target.value)} placeholder="TID" className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{lang === "en" ? "Quantity" : "الكمية"}</label>
+              <input type="number" value={rxQuantity} onChange={e => setRxQuantity(e.target.value)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{lang === "en" ? "Quantity Unit" : "وحدة الكمية"}</label>
+              <input type="text" value={rxQuantityUnit} onChange={e => setRxQuantityUnit(e.target.value)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+            </div>
+          </div>
+          <div className="mt-4">
+            <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{lang === "en" ? "Patient Instructions (SIG)" : "تعليمات المريض"}</label>
+            <input type="text" value={rxSig} onChange={e => setRxSig(e.target.value)} placeholder={lang === "en" ? "Take one tablet three times daily with food" : ""} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+          </div>
+          <button disabled={rxCreating} onClick={() => { void handleCreatePrescription(); }} className="cy-btn cy-btn-primary mt-4 disabled:opacity-50">
+            {rxCreating ? (lang === "en" ? "Creating…" : "جارٍ الإنشاء…") : (lang === "en" ? "Create Prescription" : "إنشاء الوصفة")}
+          </button>
+        </div>
+      )}
 
       <nav className="mb-8 flex flex-wrap gap-2.5">
         {[

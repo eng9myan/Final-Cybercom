@@ -78,6 +78,14 @@ export default function LabOrdersPage() {
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [showNewOrder, setShowNewOrder] = useState(false);
+  const [newOrderPatient, setNewOrderPatient] = useState("");
+  const [newOrderPriority, setNewOrderPriority] = useState<"stat" | "urgent" | "routine" | "timed" | "fasting">("routine");
+  const [newOrderLocation, setNewOrderLocation] = useState("");
+  const [newOrderNotes, setNewOrderNotes] = useState("");
+  const [newOrderTestIds, setNewOrderTestIds] = useState<string[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [createMsg, setCreateMsg] = useState("");
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -133,6 +141,53 @@ export default function LabOrdersPage() {
     }
   }
 
+  async function handleCreateOrder() {
+    if (!session) return;
+    if (!newOrderPatient || newOrderTestIds.length === 0) {
+      setCreateMsg(t("Select a patient and at least one test.", "اختر مريضاً وفحصاً واحداً على الأقل."));
+      return;
+    }
+    setCreating(true);
+    setCreateMsg("");
+    try {
+      const order = await apiFetch<LabOrderRaw>("/api/v1/lab/orders/orders/", {
+        method: "POST",
+        token: session.accessToken,
+        tenantId: session.tenantId,
+        body: JSON.stringify({
+          patient_id: newOrderPatient,
+          order_type: "clinic",
+          priority: newOrderPriority,
+          status: "submitted",
+          ordered_by: session.userId,
+          ordering_location: newOrderLocation || "Laboratory",
+          clinical_notes: newOrderNotes,
+          requested_at: new Date().toISOString(),
+        }),
+      });
+      await Promise.all(newOrderTestIds.map(testId =>
+        apiFetch("/api/v1/lab/orders/order-items/", {
+          method: "POST",
+          token: session.accessToken,
+          tenantId: session.tenantId,
+          body: JSON.stringify({ order: order.id, test: testId, priority: newOrderPriority }),
+        })
+      ));
+      setCreateMsg(t(`Order ${order.order_number} created.`, `تم إنشاء الطلب ${order.order_number}.`));
+      setNewOrderPatient("");
+      setNewOrderLocation("");
+      setNewOrderNotes("");
+      setNewOrderTestIds([]);
+      setShowNewOrder(false);
+      void loadData();
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setCreateMsg(detail || (err instanceof Error ? err.message : "Failed to create order."));
+    } finally {
+      setCreating(false);
+    }
+  }
+
   const t = (en: string, ar: string) => lang === "en" ? en : ar;
 
   if (!isAuthenticated) {
@@ -157,10 +212,72 @@ export default function LabOrdersPage() {
             {t("Real laboratory test orders (CPOE-fed)", "طلبات الفحوصات المخبرية الحقيقية")}
           </p>
         </div>
-        <button onClick={() => setLang(l => l === "en" ? "ar" : "en")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
-          {lang === "en" ? "العربية" : "English"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setShowNewOrder(s => !s)} className="cy-btn cy-btn-primary !min-h-0 !py-2 !px-4 text-sm">
+            {showNewOrder ? t("Close", "إغلاق") : t("+ New Order", "+ طلب جديد")}
+          </button>
+          <button onClick={() => setLang(l => l === "en" ? "ar" : "en")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+            {lang === "en" ? "العربية" : "English"}
+          </button>
+        </div>
       </header>
+
+      {showNewOrder && (
+        <div className="cy-card mb-6 p-5">
+          <h2 className="mb-4 text-sm font-bold text-brand-400">{t("New Lab Order (originated by Laboratory)", "طلب مخبري جديد (من المختبر)")}</h2>
+          {createMsg && (
+            <div className="mb-4 rounded-lg border border-brand-400/40 bg-brand-500/10 px-4 py-2.5 text-sm">{createMsg}</div>
+          )}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{t("Patient", "المريض")}</label>
+              <select value={newOrderPatient} onChange={e => setNewOrderPatient(e.target.value)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink">
+                <option value="">{t("Select patient…", "اختر مريضاً…")}</option>
+                {Object.values(patients).map(p => (
+                  <option key={p.id} value={p.id}>{p.first_name} {p.last_name} — {p.mrn}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{t("Priority", "الأولوية")}</label>
+              <select value={newOrderPriority} onChange={e => setNewOrderPriority(e.target.value as typeof newOrderPriority)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink">
+                {(["routine", "urgent", "stat", "timed", "fasting"] as const).map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{t("Ordering Location", "الموقع")}</label>
+              <input type="text" value={newOrderLocation} onChange={e => setNewOrderLocation(e.target.value)} placeholder="Laboratory" className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{t("Clinical Notes", "ملاحظات سريرية")}</label>
+              <input type="text" value={newOrderNotes} onChange={e => setNewOrderNotes(e.target.value)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+            </div>
+          </div>
+          <div className="mt-4">
+            <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{t("Tests", "الفحوصات")}</label>
+            <div className="flex max-h-40 flex-wrap gap-2 overflow-y-auto rounded-lg border border-ink/10 p-3">
+              {Object.values(tests).map(test => {
+                const checked = newOrderTestIds.includes(test.id);
+                return (
+                  <label key={test.id} className={`cursor-pointer rounded-md border px-2.5 py-1.5 text-xs font-medium ${checked ? "border-brand-400 bg-brand-500/15 text-brand-300" : "border-ink/10 text-ink/70"}`}>
+                    <input
+                      type="checkbox"
+                      className="mr-1.5 align-middle"
+                      checked={checked}
+                      onChange={() => setNewOrderTestIds(prev => checked ? prev.filter(id => id !== test.id) : [...prev, test.id])}
+                    />
+                    {test.name}
+                  </label>
+                );
+              })}
+              {Object.values(tests).length === 0 && <span className="text-xs text-ink/40">{t("No tests in catalog.", "لا توجد فحوصات في الكتالوج.")}</span>}
+            </div>
+          </div>
+          <button disabled={creating} onClick={() => { void handleCreateOrder(); }} className="cy-btn cy-btn-primary mt-4 disabled:opacity-50">
+            {creating ? t("Creating…", "جارٍ الإنشاء…") : t("Create Order", "إنشاء الطلب")}
+          </button>
+        </div>
+      )}
 
       <nav className="mb-6 flex flex-wrap gap-2">
         {[

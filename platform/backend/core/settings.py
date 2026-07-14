@@ -287,6 +287,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "shared.auth.auth_middleware.CyIdentityAuthMiddleware",
     "core.middleware.tenant.TenantIsolationMiddleware",
+    "core.middleware.portal_account.PortalAccountMiddleware",
     "core.middleware.branding.BrandingMiddleware",
     "core.middleware.feature_flags.FeatureFlagMiddleware",
     "core.middleware.audit.AuditMiddleware",

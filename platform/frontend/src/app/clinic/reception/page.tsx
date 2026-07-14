@@ -235,20 +235,6 @@ export default function ReceptionPage() {
         </div>
       </header>
 
-      {/* Sibling nav */}
-      <nav className="mb-8 flex flex-wrap gap-2.5">
-        {[
-          { href: "/clinic/appointments",  label: lang === "en" ? "Appointments"  : "المواعيد" },
-          { href: "/clinic/triage",        label: lang === "en" ? "Triage"        : "الفرز" },
-          { href: "/clinic/consultations", label: lang === "en" ? "Consultations" : "الاستشارات" },
-          { href: "/clinic/telemedicine",  label: lang === "en" ? "Telemedicine"  : "التطبيب عن بُعد" },
-        ].map(n => (
-          <a key={n.href} href={n.href} className="rounded-md border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold hover:bg-ink/5">
-            {n.label}
-          </a>
-        ))}
-      </nav>
-
       {/* Metrics */}
       <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[

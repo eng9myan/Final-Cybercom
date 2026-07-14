@@ -106,6 +106,26 @@ class PrescriptionItemViewSet(PharmacyModelViewSet):
     required_feature = "pharmacy.prescriptions"
     filterset_fields = ["prescription", "is_active", "dispense_as_written"]
 
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        item = serializer.instance
+        from products.cymed.rcm.charge_capture.services import capture_and_invoice
+
+        capture_and_invoice(
+            tenant_id=item.tenant_id,
+            patient_id=item.prescription.patient_id,
+            encounter_id=item.prescription.encounter_id,
+            facility_id=None,
+            service_source="pharmacy",
+            charge_category="medication",
+            service_code=item.drug_code,
+            service_description=item.drug_name,
+            quantity=item.quantity,
+            source_order_id=item.prescription_id,
+            source_module="Prescription",
+            rendering_provider_id=item.prescription.prescriber_id,
+        )
+
 
 class MedicationOrderViewSet(PharmacyModelViewSet):
     queryset = MedicationOrder.objects.prefetch_related("status_history").select_related()

@@ -147,9 +147,6 @@ export default function TelemedicinePage() {
           <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">{isAr ? "English" : "العربية"}</button>
         </div>
       </header>
-      <nav className="mb-6 flex flex-wrap gap-2">
-        <a href="/clinic" className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm no-underline">{isAr ? "← الرجوع للعيادة" : "← Back to Clinic"}</a>
-      </nav>
 
       {actionMsg && (
         <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-5 py-3 text-sm font-semibold text-red-400">

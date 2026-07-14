@@ -54,39 +54,85 @@ def _hold(order: ProviderOrderRequest, reason: str) -> None:
 
 
 def _fan_out_medication(order: ProviderOrderRequest) -> None:
-    from products.cymed.pharmacy.prescriptions.models import DEASchedule, MedicationOrder
-
+    """
+    Inpatient orders (order_details.admission_id present) create a real
+    MedicationOrder (MAR-linked). Outpatient/Clinic orders -- no admission,
+    e.g. a Clinic consultation -- create a real outpatient Prescription
+    instead, since MedicationOrder.admission_id is required (non-nullable).
+    """
     details = order.order_details or {}
-    required = ["drug_code", "drug_name", "dose", "dose_unit", "route", "frequency", "admission_id"]
+    required = ["drug_code", "drug_name", "dose", "dose_unit", "route", "frequency"]
     missing = [f for f in required if not details.get(f)]
     if missing:
         _hold(order, f"Cannot fan out to Pharmacy: missing {', '.join(missing)} in order_details.")
         return
 
-    order_type = "stat" if order.priority == "stat" else "scheduled"
-    med_order = MedicationOrder.objects.create(
-        tenant_id=order.tenant_id,
-        order_number=f"RX-{order.id.hex[:8].upper()}",
-        patient_id=order.patient_id,
-        admission_id=details["admission_id"],
-        encounter_id=order.cymed_encounter_id,
-        prescriber_id=order.ordering_provider_id,
-        order_type=order_type,
-        priority=order.priority,
-        drug_code=details["drug_code"],
-        drug_name=details["drug_name"],
-        dose=details["dose"],
-        dose_unit=details["dose_unit"],
-        route=details["route"],
-        frequency=details["frequency"],
-        start_date=details.get("start_date"),
-        stop_date=details.get("stop_date"),
-        duration_days=details.get("duration_days", 0),
-        is_controlled=details.get("is_controlled", False),
-        dea_schedule=details.get("dea_schedule", DEASchedule.NON_CONTROLLED),
-    )
+    if details.get("admission_id"):
+        from products.cymed.pharmacy.prescriptions.models import DEASchedule, MedicationOrder
+
+        order_type = "stat" if order.priority == "stat" else "scheduled"
+        med_order = MedicationOrder.objects.create(
+            tenant_id=order.tenant_id,
+            order_number=f"RX-{order.id.hex[:8].upper()}",
+            patient_id=order.patient_id,
+            admission_id=details["admission_id"],
+            encounter_id=order.cymed_encounter_id,
+            prescriber_id=order.ordering_provider_id,
+            order_type=order_type,
+            priority=order.priority,
+            drug_code=details["drug_code"],
+            drug_name=details["drug_name"],
+            dose=details["dose"],
+            dose_unit=details["dose_unit"],
+            route=details["route"],
+            frequency=details["frequency"],
+            start_date=details.get("start_date"),
+            stop_date=details.get("stop_date"),
+            duration_days=details.get("duration_days", 0),
+            is_controlled=details.get("is_controlled", False),
+            dea_schedule=details.get("dea_schedule", DEASchedule.NON_CONTROLLED),
+        )
+        pharmacy_record_number = med_order.order_number
+        pharmacy_record_id = med_order.id
+    else:
+        from products.cymed.pharmacy.prescriptions.models import (
+            DEASchedule,
+            Prescription,
+            PrescriptionItem,
+        )
+
+        rx = Prescription.objects.create(
+            tenant_id=order.tenant_id,
+            prescription_number=f"RX-{order.id.hex[:8].upper()}",
+            patient_id=order.patient_id,
+            encounter_id=order.cymed_encounter_id,
+            prescriber_id=order.ordering_provider_id,
+            prescription_type="outpatient",
+            status="pending",
+            priority=order.priority,
+            clinical_notes=order.clinical_indication,
+            is_controlled=details.get("is_controlled", False),
+            dea_schedule=details.get("dea_schedule", DEASchedule.NON_CONTROLLED),
+        )
+        PrescriptionItem.objects.create(
+            tenant_id=order.tenant_id,
+            prescription=rx,
+            drug_code=details["drug_code"],
+            drug_name=details["drug_name"],
+            dose=details["dose"],
+            dose_unit=details["dose_unit"],
+            route=details["route"],
+            frequency=details["frequency"],
+            duration=details.get("duration", ""),
+            quantity=details.get("quantity", 1),
+            quantity_unit=details.get("quantity_unit", "unit"),
+            sig=details.get("sig") or f"{details['dose']}{details['dose_unit']} {details['route']} {details['frequency']}",
+        )
+        pharmacy_record_number = rx.prescription_number
+        pharmacy_record_id = rx.id
+
     ProviderOrderRequest.objects.filter(pk=order.pk).update(
-        status="acknowledged", cymed_rx_id=med_order.id, acknowledged_at=timezone.now()
+        status="acknowledged", cymed_rx_id=pharmacy_record_id, acknowledged_at=timezone.now()
     )
     OrderStatusUpdate.objects.create(
         tenant_id=order.tenant_id,
@@ -94,7 +140,7 @@ def _fan_out_medication(order: ProviderOrderRequest) -> None:
         previous_status="submitted",
         new_status="acknowledged",
         updated_by_system="cpoe_fanout",
-        notes=f"Fanned out to Pharmacy as {med_order.order_number} (status={med_order.status}).",
+        notes=f"Fanned out to Pharmacy as {pharmacy_record_number}.",
     )
 
 
@@ -153,7 +199,7 @@ def _fan_out_laboratory(order: ProviderOrderRequest) -> None:
         patient_id=order.patient_id,
         encounter_id=order.cymed_encounter_id,
         admission_id=details.get("admission_id"),
-        order_type="hospital",
+        order_type="hospital" if details.get("admission_id") else "clinic",
         priority=order.priority,
         status="submitted",
         ordered_by=order.ordering_provider_id,
@@ -218,7 +264,7 @@ def _fan_out_imaging(order: ProviderOrderRequest) -> None:
         encounter_id=order.cymed_encounter_id,
         ordered_by=order.ordering_provider_id,
         priority=order.priority,
-        order_type="inpatient",
+        order_type="inpatient" if details.get("admission_id") else "outpatient",
         clinical_indication=order.clinical_indication,
         icd11_codes=details.get("icd11_codes", []),
         status="pending",

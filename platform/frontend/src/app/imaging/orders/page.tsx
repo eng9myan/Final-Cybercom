@@ -75,6 +75,14 @@ export default function ImagingOrdersPage() {
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [showNewOrder, setShowNewOrder] = useState(false);
+  const [newOrderPatient, setNewOrderPatient] = useState("");
+  const [newOrderPriority, setNewOrderPriority] = useState<"routine" | "urgent" | "stat" | "critical">("routine");
+  const [newOrderFacility, setNewOrderFacility] = useState("");
+  const [newOrderIndication, setNewOrderIndication] = useState("");
+  const [newOrderProcedureId, setNewOrderProcedureId] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createMsg, setCreateMsg] = useState("");
 
   const loadData = useCallback(async () => {
     if (!session) return;
@@ -125,6 +133,49 @@ export default function ImagingOrdersPage() {
     }
   }
 
+  async function handleCreateOrder() {
+    if (!session) return;
+    if (!newOrderPatient || !newOrderProcedureId) {
+      setCreateMsg(t("Select a patient and a procedure.", "اختر مريضاً وإجراءً."));
+      return;
+    }
+    setCreating(true);
+    setCreateMsg("");
+    try {
+      const orderNumber = `IMG-${Date.now().toString(36).toUpperCase()}`;
+      const order = await apiFetch<ImagingOrderRaw>("/api/v1/imaging/orders/orders/", {
+        method: "POST",
+        token: session.accessToken,
+        tenantId: session.tenantId,
+        body: JSON.stringify({
+          order_number: orderNumber,
+          patient_id: newOrderPatient,
+          ordered_by: session.userId,
+          order_type: "outpatient",
+          priority: newOrderPriority,
+          status: "pending",
+          clinical_indication: newOrderIndication,
+          ordering_facility: newOrderFacility || "Imaging",
+        }),
+      });
+      await apiFetch("/api/v1/imaging/orders/order-items/", {
+        method: "POST",
+        token: session.accessToken,
+        tenantId: session.tenantId,
+        body: JSON.stringify({ order: order.id, procedure: newOrderProcedureId, status: "pending" }),
+      });
+      setCreateMsg(t(`Order ${orderNumber} created.`, `تم إنشاء الطلب ${orderNumber}.`));
+      setNewOrderPatient(""); setNewOrderFacility(""); setNewOrderIndication(""); setNewOrderProcedureId("");
+      setShowNewOrder(false);
+      void loadData();
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setCreateMsg(detail || (err instanceof Error ? err.message : "Failed to create order."));
+    } finally {
+      setCreating(false);
+    }
+  }
+
   const t = (en: string, ar: string) => lang === "en" ? en : ar;
 
   if (!isAuthenticated) {
@@ -147,10 +198,61 @@ export default function ImagingOrdersPage() {
             {t("Real imaging orders (CPOE-fed)", "طلبات أشعة حقيقية")}
           </p>
         </div>
-        <button onClick={() => setLang(l => l === "en" ? "ar" : "en")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
-          {lang === "en" ? "العربية" : "English"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setShowNewOrder(s => !s)} className="cy-btn cy-btn-primary !min-h-0 !py-2 !px-4 text-sm">
+            {showNewOrder ? t("Close", "إغلاق") : t("+ New Order", "+ طلب جديد")}
+          </button>
+          <button onClick={() => setLang(l => l === "en" ? "ar" : "en")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+            {lang === "en" ? "العربية" : "English"}
+          </button>
+        </div>
       </header>
+
+      {showNewOrder && (
+        <div className="cy-card mb-6 p-5">
+          <h2 className="mb-4 text-sm font-bold text-brand-400">{t("New Imaging Order (originated by Imaging)", "طلب أشعة جديد (من قسم الأشعة)")}</h2>
+          {createMsg && (
+            <div className="mb-4 rounded-lg border border-brand-400/40 bg-brand-500/10 px-4 py-2.5 text-sm">{createMsg}</div>
+          )}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{t("Patient", "المريض")}</label>
+              <select value={newOrderPatient} onChange={e => setNewOrderPatient(e.target.value)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink">
+                <option value="">{t("Select patient…", "اختر مريضاً…")}</option>
+                {Object.values(patients).map(p => (
+                  <option key={p.id} value={p.id}>{p.first_name} {p.last_name} — {p.mrn}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{t("Procedure", "الإجراء")}</label>
+              <select value={newOrderProcedureId} onChange={e => setNewOrderProcedureId(e.target.value)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink">
+                <option value="">{t("Select procedure…", "اختر إجراءً…")}</option>
+                {Object.values(procedures).map(p => (
+                  <option key={p.id} value={p.id}>{p.name} ({p.modality})</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{t("Priority", "الأولوية")}</label>
+              <select value={newOrderPriority} onChange={e => setNewOrderPriority(e.target.value as typeof newOrderPriority)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink">
+                {(["routine", "urgent", "stat", "critical"] as const).map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{t("Ordering Facility", "المنشأة")}</label>
+              <input type="text" value={newOrderFacility} onChange={e => setNewOrderFacility(e.target.value)} placeholder="Imaging" className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+            </div>
+          </div>
+          <div className="mt-4">
+            <label className="mb-1.5 block text-[13px] font-semibold text-ink/50">{t("Clinical Indication", "الإشارة السريرية")}</label>
+            <input type="text" value={newOrderIndication} onChange={e => setNewOrderIndication(e.target.value)} className="w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+          </div>
+          <button disabled={creating} onClick={() => { void handleCreateOrder(); }} className="cy-btn cy-btn-primary mt-4 disabled:opacity-50">
+            {creating ? t("Creating…", "جارٍ الإنشاء…") : t("Create Order", "إنشاء الطلب")}
+          </button>
+        </div>
+      )}
 
       <nav className="mb-6 flex flex-wrap gap-2">
         {[

@@ -30,9 +30,24 @@ interface EncounterRaw { id: string; patient: string; encounter_type: string; st
 interface PatientRaw { id: string; first_name: string; last_name: string; mrn: string; dob: string; gender: string; }
 interface Paginated<T> { count: number; results: T[]; }
 
+interface OrderRequestRaw {
+  id: string;
+  patient_id: string;
+  cymed_encounter_id: string | null;
+  order_category: string;
+  order_name: string;
+  priority: string;
+  status: string;
+  created_at: string;
+}
+interface LabTestRaw { id: string; code: string; name: string; }
+interface ImagingProcedureRaw { id: string; code: string; name: string; modality: string; }
+interface FormularyDrugRaw { id: string; drug_code: string; drug_name: string; }
+
 interface Consultation {
   id: string;
   encounter: string;
+  patientId: string;
   patient_name: string;
   mrn: string;
   dob: string;
@@ -85,7 +100,7 @@ export default function ConsultationsPage() {
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"soap" | "diagnoses" | "procedures">("soap");
+  const [activeTab, setActiveTab] = useState<"soap" | "diagnoses" | "procedures" | "orders">("soap");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [saveMsg, setSaveMsg] = useState("");
 
@@ -93,17 +108,40 @@ export default function ConsultationsPage() {
   const [newDiagnosis, setNewDiagnosis] = useState({ code: "", system: "icd11", display: "" });
   const [newProcedure, setNewProcedure] = useState({ code: "", system: "snomed", display: "", notes: "" });
 
+  // Orders tab -- CPOE order entry (fans out to real Lab/Pharmacy/Imaging via
+  // provider_portal.orders.signals as outpatient/clinic orders, no admission_id).
+  const [orders, setOrders] = useState<OrderRequestRaw[]>([]);
+  const [labTests, setLabTests] = useState<LabTestRaw[]>([]);
+  const [imagingProcedures, setImagingProcedures] = useState<ImagingProcedureRaw[]>([]);
+  const [drugs, setDrugs] = useState<FormularyDrugRaw[]>([]);
+  const [orderCategory, setOrderCategory] = useState<"laboratory" | "imaging" | "medication">("laboratory");
+  const [orderPriority, setOrderPriority] = useState<"routine" | "urgent" | "stat">("routine");
+  const [orderIndication, setOrderIndication] = useState("");
+  const [selectedTestCodes, setSelectedTestCodes] = useState<string[]>([]);
+  const [selectedProcedureCodes, setSelectedProcedureCodes] = useState<string[]>([]);
+  const [medForm, setMedForm] = useState({ drugCode: "", drugName: "", dose: "", doseUnit: "mg", route: "oral", frequency: "" });
+  const [orderSubmitting, setOrderSubmitting] = useState(false);
+  const [orderMsg, setOrderMsg] = useState("");
+
   const loadData = useCallback(async () => {
     if (!session) return;
     setLoading(true);
     setFetchError(null);
     try {
       const opts = { token: session.accessToken, tenantId: session.tenantId };
-      const [consultPage, encounterPage, patientPage] = await Promise.all([
+      const [consultPage, encounterPage, patientPage, orderPage, testPage, procPage, drugPage] = await Promise.all([
         apiFetch<Paginated<ConsultationRaw>>("/api/v1/clinic/consultations/notes/", opts),
         apiFetch<Paginated<EncounterRaw>>("/api/v1/encounters/", opts),
         apiFetch<Paginated<PatientRaw>>("/api/v1/patients/", opts),
+        apiFetch<Paginated<OrderRequestRaw>>("/api/v1/provider-portal/orders/order-requests/", opts),
+        apiFetch<Paginated<LabTestRaw>>("/api/v1/lab/orders/tests/", opts),
+        apiFetch<Paginated<ImagingProcedureRaw>>("/api/v1/imaging/orders/procedures/", opts),
+        apiFetch<Paginated<FormularyDrugRaw>>("/api/v1/pharmacy/formulary/drugs/", opts),
       ]);
+      setOrders(orderPage.results ?? []);
+      setLabTests(testPage.results ?? []);
+      setImagingProcedures(procPage.results ?? []);
+      setDrugs(drugPage.results ?? []);
       const encounterById = new Map(encounterPage.results.map(e => [e.id, e]));
       const patientById = new Map(patientPage.results.map(p => [p.id, p]));
 
@@ -113,6 +151,7 @@ export default function ConsultationsPage() {
         return {
           id: c.id,
           encounter: c.encounter,
+          patientId: encounter?.patient ?? "",
           patient_name: patient ? `${patient.first_name} ${patient.last_name}` : "Unknown patient",
           mrn: patient?.mrn ?? "—",
           dob: patient?.dob ?? "—",
@@ -213,6 +252,66 @@ export default function ConsultationsPage() {
     setTimeout(() => setSaveMsg(""), 3000);
   };
 
+  function orderDetailsFor(): { details: Record<string, unknown>; name: string } | null {
+    if (orderCategory === "laboratory") {
+      if (selectedTestCodes.length === 0) return null;
+      const names = labTests.filter(t => selectedTestCodes.includes(t.code)).map(t => t.name);
+      return { details: { test_codes: selectedTestCodes }, name: names.join(", ") };
+    }
+    if (orderCategory === "imaging") {
+      if (selectedProcedureCodes.length === 0) return null;
+      const names = imagingProcedures.filter(p => selectedProcedureCodes.includes(p.code)).map(p => p.name);
+      return { details: { procedure_codes: selectedProcedureCodes }, name: names.join(", ") };
+    }
+    if (!medForm.drugCode || !medForm.dose || !medForm.frequency) return null;
+    return {
+      details: { drug_code: medForm.drugCode, drug_name: medForm.drugName, dose: medForm.dose, dose_unit: medForm.doseUnit, route: medForm.route, frequency: medForm.frequency },
+      name: `${medForm.drugName} ${medForm.dose}${medForm.doseUnit} ${medForm.route} ${medForm.frequency}`,
+    };
+  }
+
+  const handleSubmitOrder = async () => {
+    if (!session || !selected || !selected.patientId) return;
+    const resolved = orderDetailsFor();
+    if (!resolved) {
+      setOrderMsg(lang === "en" ? "Fill in the order details for the selected category." : "أكمل تفاصيل الطلب للفئة المحددة.");
+      return;
+    }
+    setOrderSubmitting(true);
+    setOrderMsg("");
+    try {
+      await apiFetch("/api/v1/provider-portal/orders/order-requests/", {
+        method: "POST",
+        body: JSON.stringify({
+          patient_id: selected.patientId,
+          cymed_encounter_id: selected.encounter,
+          ordering_provider_id: session.userId,
+          ordering_provider_name: session.displayName || session.email,
+          order_category: orderCategory,
+          order_name: resolved.name,
+          order_details: resolved.details,
+          priority: orderPriority,
+          status: "submitted",
+          clinical_indication: orderIndication,
+          submitted_at: new Date().toISOString(),
+        }),
+        token: session.accessToken,
+        tenantId: session.tenantId,
+      });
+      setOrderMsg(lang === "en" ? "Order submitted — fanned out to the department." : "تم إرسال الطلب.");
+      setSelectedTestCodes([]); setSelectedProcedureCodes([]);
+      setMedForm({ drugCode: "", drugName: "", dose: "", doseUnit: "mg", route: "oral", frequency: "" });
+      setOrderIndication("");
+      void loadData();
+    } catch (err) {
+      const detail = (err as { detail?: string })?.detail;
+      setOrderMsg(detail || (lang === "en" ? "Failed to submit order." : "فشل إرسال الطلب."));
+    } finally {
+      setOrderSubmitting(false);
+    }
+    setTimeout(() => setOrderMsg(""), 4000);
+  };
+
   const filtered = filterStatus === "all" ? consultations : consultations.filter(c => c.encounterStatus === filterStatus);
   const dir = lang === "ar" ? "rtl" : "ltr";
 
@@ -266,20 +365,6 @@ export default function ConsultationsPage() {
           </button>
         </div>
       </header>
-
-      {/* Sibling nav */}
-      <nav className="mb-8 flex flex-wrap gap-2.5">
-        {[
-          { href: "/clinic/appointments",  label: lang === "en" ? "Appointments"  : "المواعيد" },
-          { href: "/clinic/reception",     label: lang === "en" ? "Reception"     : "الاستقبال" },
-          { href: "/clinic/triage",        label: lang === "en" ? "Triage"        : "الفرز" },
-          { href: "/clinic/telemedicine",  label: lang === "en" ? "Telemedicine"  : "التطبيب عن بُعد" },
-        ].map(n => (
-          <a key={n.href} href={n.href} className="rounded-md border border-ink/10 bg-surface px-4 py-2 text-xs font-semibold hover:bg-ink/5">
-            {n.label}
-          </a>
-        ))}
-      </nav>
 
       {/* Summary metrics */}
       <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -376,7 +461,7 @@ export default function ConsultationsPage() {
 
           {/* Tabs */}
           <div className="flex border-b border-ink/10">
-            {(["soap", "diagnoses", "procedures"] as const).map(tab => (
+            {(["soap", "diagnoses", "procedures", "orders"] as const).map(tab => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -384,9 +469,11 @@ export default function ConsultationsPage() {
               >
                 {tab === "soap"       ? (lang === "en" ? "SOAP Note"  : "ملاحظة SOAP") :
                  tab === "diagnoses"  ? (lang === "en" ? "Diagnoses"  : "التشخيصات") :
-                                        (lang === "en" ? "Procedures" : "الإجراءات")}
+                 tab === "procedures" ? (lang === "en" ? "Procedures" : "الإجراءات") :
+                                        (lang === "en" ? "Orders"     : "الطلبات")}
                 {tab === "diagnoses" && ` (${selected.diagnoses.length})`}
                 {tab === "procedures" && ` (${selected.procedures.length})`}
+                {tab === "orders" && ` (${orders.filter(o => o.cymed_encounter_id === selected.encounter).length})`}
               </button>
             ))}
           </div>
@@ -557,6 +644,126 @@ export default function ConsultationsPage() {
                       {lang === "en" ? "Add" : "إضافة"}
                     </button>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Orders tab -- real CPOE, fans out to Lab/Pharmacy/Imaging */}
+            {activeTab === "orders" && (
+              <div>
+                {(() => {
+                  const encounterOrders = orders.filter(o => o.cymed_encounter_id === selected.encounter);
+                  return encounterOrders.length > 0 ? (
+                    <div className="mb-6 overflow-auto">
+                      <table className="w-full border-collapse">
+                        <thead>
+                          <tr className="border-b border-ink/10">
+                            {[lang === "en" ? "Category" : "الفئة", lang === "en" ? "Order" : "الطلب", lang === "en" ? "Priority" : "الأولوية", lang === "en" ? "Status" : "الحالة"].map(h => (
+                              <th key={h} className={`px-3.5 py-2.5 text-xs font-bold uppercase text-ink/50 ${lang === "ar" ? "text-right" : "text-left"}`}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {encounterOrders.map(o => (
+                            <tr key={o.id} className="border-b border-ink/5">
+                              <td className="px-3.5 py-2.5 text-sm capitalize">{o.order_category}</td>
+                              <td className="px-3.5 py-2.5 text-sm">{o.order_name}</td>
+                              <td className="px-3.5 py-2.5 text-sm capitalize">{o.priority}</td>
+                              <td className="px-3.5 py-2.5 text-sm capitalize">{o.status}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="mb-6 text-sm text-ink/50">
+                      {lang === "en" ? "No orders placed yet for this consultation." : "لا توجد طلبات حتى الآن لهذه الاستشارة."}
+                    </p>
+                  );
+                })()}
+
+                <div className="cy-card p-5">
+                  <h3 className="mb-4 text-sm font-bold text-brand-400">
+                    {lang === "en" ? "New Order" : "طلب جديد"}
+                  </h3>
+                  {orderMsg && (
+                    <div className="mb-4 rounded-lg border border-brand-400/40 bg-brand-500/10 px-4 py-2.5 text-sm">{orderMsg}</div>
+                  )}
+                  <div className="mb-4 flex gap-2">
+                    {(["laboratory", "imaging", "medication"] as const).map(cat => (
+                      <button
+                        key={cat}
+                        onClick={() => setOrderCategory(cat)}
+                        className={`rounded-md border px-3 py-1.5 text-xs font-bold capitalize ${orderCategory === cat ? "border-brand-400 bg-brand-500 text-white" : "border-ink/10 text-ink/70"}`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                    <select value={orderPriority} onChange={e => setOrderPriority(e.target.value as typeof orderPriority)} className="ml-auto rounded-md border border-ink/10 bg-surface px-2.5 py-1.5 text-xs text-ink">
+                      {(["routine", "urgent", "stat"] as const).map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </div>
+
+                  {orderCategory === "laboratory" && (
+                    <div className="mb-3 flex max-h-32 flex-wrap gap-2 overflow-y-auto rounded-lg border border-ink/10 p-3">
+                      {labTests.map(test => {
+                        const checked = selectedTestCodes.includes(test.code);
+                        return (
+                          <label key={test.id} className={`cursor-pointer rounded-md border px-2.5 py-1.5 text-xs font-medium ${checked ? "border-brand-400 bg-brand-500/15 text-brand-300" : "border-ink/10 text-ink/70"}`}>
+                            <input type="checkbox" className="mr-1.5 align-middle" checked={checked} onChange={() => setSelectedTestCodes(prev => checked ? prev.filter(c => c !== test.code) : [...prev, test.code])} />
+                            {test.name}
+                          </label>
+                        );
+                      })}
+                      {labTests.length === 0 && <span className="text-xs text-ink/40">{lang === "en" ? "No tests in catalog." : "لا توجد فحوصات."}</span>}
+                    </div>
+                  )}
+
+                  {orderCategory === "imaging" && (
+                    <div className="mb-3 flex max-h-32 flex-wrap gap-2 overflow-y-auto rounded-lg border border-ink/10 p-3">
+                      {imagingProcedures.map(proc => {
+                        const checked = selectedProcedureCodes.includes(proc.code);
+                        return (
+                          <label key={proc.id} className={`cursor-pointer rounded-md border px-2.5 py-1.5 text-xs font-medium ${checked ? "border-brand-400 bg-brand-500/15 text-brand-300" : "border-ink/10 text-ink/70"}`}>
+                            <input type="checkbox" className="mr-1.5 align-middle" checked={checked} onChange={() => setSelectedProcedureCodes(prev => checked ? prev.filter(c => c !== proc.code) : [...prev, proc.code])} />
+                            {proc.name} ({proc.modality})
+                          </label>
+                        );
+                      })}
+                      {imagingProcedures.length === 0 && <span className="text-xs text-ink/40">{lang === "en" ? "No procedures in catalog." : "لا توجد إجراءات."}</span>}
+                    </div>
+                  )}
+
+                  {orderCategory === "medication" && (
+                    <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      <select
+                        value={medForm.drugCode}
+                        onChange={e => {
+                          const drug = drugs.find(d => d.drug_code === e.target.value);
+                          setMedForm(f => ({ ...f, drugCode: e.target.value, drugName: drug?.drug_name ?? f.drugName }));
+                        }}
+                        className="col-span-2 rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink sm:col-span-1"
+                      >
+                        <option value="">{lang === "en" ? "Select drug…" : "اختر دواءً…"}</option>
+                        {drugs.map(d => <option key={d.id} value={d.drug_code}>{d.drug_name}</option>)}
+                      </select>
+                      <input type="text" value={medForm.dose} onChange={e => setMedForm(f => ({ ...f, dose: e.target.value }))} placeholder={lang === "en" ? "Dose" : "الجرعة"} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+                      <input type="text" value={medForm.doseUnit} onChange={e => setMedForm(f => ({ ...f, doseUnit: e.target.value }))} placeholder={lang === "en" ? "Unit" : "الوحدة"} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+                      <input type="text" value={medForm.route} onChange={e => setMedForm(f => ({ ...f, route: e.target.value }))} placeholder={lang === "en" ? "Route" : "طريقة الإعطاء"} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+                      <input type="text" value={medForm.frequency} onChange={e => setMedForm(f => ({ ...f, frequency: e.target.value }))} placeholder={lang === "en" ? "Frequency" : "التكرار"} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink" />
+                    </div>
+                  )}
+
+                  <input
+                    type="text"
+                    value={orderIndication}
+                    onChange={e => setOrderIndication(e.target.value)}
+                    placeholder={lang === "en" ? "Clinical indication…" : "الإشارة السريرية…"}
+                    className="mb-3 w-full rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm text-ink"
+                  />
+                  <button disabled={orderSubmitting} onClick={() => { void handleSubmitOrder(); }} className="cy-btn cy-btn-primary !min-h-0 whitespace-nowrap !py-2 !px-5 text-sm disabled:opacity-50">
+                    {orderSubmitting ? (lang === "en" ? "Submitting…" : "جارٍ الإرسال…") : (lang === "en" ? "Submit Order" : "إرسال الطلب")}
+                  </button>
                 </div>
               </div>
             )}

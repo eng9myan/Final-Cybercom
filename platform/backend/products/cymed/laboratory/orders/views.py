@@ -65,6 +65,26 @@ class LabOrderItemViewSet(LaboratoryModelViewSet):
     required_feature = "lab.orders"
     filterset_fields = ["order", "status", "priority"]
 
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        item = serializer.instance
+        if item.test is not None:
+            from products.cymed.rcm.charge_capture.services import capture_and_invoice
+
+            capture_and_invoice(
+                tenant_id=item.tenant_id,
+                patient_id=item.order.patient_id,
+                encounter_id=item.order.encounter_id,
+                facility_id=None,
+                service_source="laboratory",
+                charge_category="lab_test",
+                service_code=item.test.code,
+                service_description=item.test.name,
+                source_order_id=item.order_id,
+                source_module="LabOrder",
+                rendering_provider_id=item.order.ordered_by,
+            )
+
 
 class LabOrderDiagnosisViewSet(LaboratoryModelViewSet):
     queryset = LabOrderDiagnosis.objects.all()
