@@ -43,7 +43,11 @@ function CallbackHandler() {
         };
 
         setSession(session);
-        router.replace("/dashboard");
+        // "/" rather than a fixed path: under a product subdomain (e.g.
+        // hospital.localhost, hospital.cy-com.com) middleware.ts rewrites "/"
+        // onto that product's real dashboard; a hardcoded "/dashboard" 404'd
+        // under every subdomain, since only the root app has that route.
+        router.replace("/");
       } catch {
         router.replace("/auth?error=token_exchange_failed");
       }
