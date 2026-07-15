@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Biohazard } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 interface WasteCollectionLog {
   id: string;
@@ -23,8 +24,14 @@ interface HaulerManifest {
 }
 interface Paginated<T> { count: number; results: T[]; }
 
+const STATUS_LABEL_AR: Record<string, string> = { pending: "معلق", in_transit: "قيد النقل", disposed: "تم التخلص منه" };
+
 export default function WasteManagementPage() {
   const { session, isAuthenticated } = useAuth();
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
+  const isAr = lang === "ar";
   const [logs, setLogs] = useState<WasteCollectionLog[] | null>(null);
   const [manifests, setManifests] = useState<HaulerManifest[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -47,9 +54,9 @@ export default function WasteManagementPage() {
       setManifests(manifestPage.results);
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load waste management data."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحميل بيانات إدارة النفايات." : "Failed to load waste management data."));
     }
-  }, [session]);
+  }, [session, isAr]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -65,7 +72,7 @@ export default function WasteManagementPage() {
       void load();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to update manifest status."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحديث حالة البيان." : "Failed to update manifest status."));
     } finally {
       setBusy(false);
     }
@@ -75,37 +82,42 @@ export default function WasteManagementPage() {
     return <div className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold">Sign in required</h1></div>;
   }
   if (fetchError) {
-    return <div role="alert" className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold text-red-400">Unable to load waste management data</h1><p className="mt-1 text-sm text-ink/50">{fetchError}</p></div>;
+    return <div role="alert" className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold text-red-400">{isAr ? "تعذر تحميل بيانات إدارة النفايات" : "Unable to load waste management data"}</h1><p className="mt-1 text-sm text-ink/50">{fetchError}</p></div>;
   }
   if (logs === null) {
-    return <div className="mx-auto mt-16 max-w-lg text-center text-sm text-ink/40">Loading...</div>;
+    return <div className="mx-auto mt-16 max-w-lg text-center text-sm text-ink/40">{isAr ? "جارٍ التحميل..." : "Loading..."}</div>;
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div dir={isAr ? "rtl" : "ltr"} className="mx-auto max-w-5xl">
       <header className="mb-6 flex items-center justify-between border-b border-ink/10 pb-4">
         <div>
-          <h1 className="flex items-center gap-2 font-heading text-2xl font-bold"><Biohazard size={22} /> Waste Management</h1>
-          <p className="mt-1 text-sm text-ink/50">{logs.length} collection log(s), {manifests.length} hauler manifest(s)</p>
+          <h1 className="flex items-center gap-2 font-heading text-2xl font-bold"><Biohazard size={22} /> {isAr ? "إدارة النفايات" : "Waste Management"}</h1>
+          <p className="mt-1 text-sm text-ink/50">{isAr ? `${logs.length} سجل (سجلات) تجميع، ${manifests.length} بيان (بيانات) ناقل` : `${logs.length} collection log(s), ${manifests.length} hauler manifest(s)`}</p>
         </div>
+        <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+          {isAr ? "English" : "العربية"}
+        </button>
       </header>
 
       <div className="mb-6 overflow-hidden rounded-xl border border-ink/10 bg-surface-raised">
-        <div className="border-b border-ink/10 px-4 py-3 text-sm font-semibold">Waste Collection Logs</div>
+        <div className="border-b border-ink/10 px-4 py-3 text-sm font-semibold">{isAr ? "سجلات تجميع النفايات" : "Waste Collection Logs"}</div>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-ink/10 bg-ink/5">
-                {["Type", "Source Location", "Status"].map(h => <th key={h} className="px-4 py-3 text-left font-semibold text-ink/50">{h}</th>)}
+                {(isAr ? ["النوع", "موقع المصدر", "الحالة"] : ["Type", "Source Location", "Status"]).map(h => (
+                  <th key={h} className={`px-4 py-3 font-semibold text-ink/50 ${isAr ? "text-right" : "text-left"}`}>{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {logs.length === 0 && <tr><td colSpan={3} className="px-4 py-6 text-center text-ink/50">No collection logs.</td></tr>}
+              {logs.length === 0 && <tr><td colSpan={3} className="px-4 py-6 text-center text-ink/50">{isAr ? "لا توجد سجلات تجميع." : "No collection logs."}</td></tr>}
               {logs.map(l => (
                 <tr key={l.id} className="border-b border-ink/5">
                   <td className="px-4 py-3 capitalize">{l.waste_type}</td>
                   <td className="px-4 py-3 text-ink/60">{l.source_location}</td>
-                  <td className="px-4 py-3 capitalize text-ink/60">{l.status.replace("_", " ")}</td>
+                  <td className="px-4 py-3 capitalize text-ink/60">{isAr ? (STATUS_LABEL_AR[l.status] ?? l.status) : l.status.replace("_", " ")}</td>
                 </tr>
               ))}
             </tbody>
@@ -114,9 +126,9 @@ export default function WasteManagementPage() {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-ink/10 bg-surface-raised">
-        <div className="border-b border-ink/10 px-4 py-3 text-sm font-semibold">Hauler Manifests — Dual Sign-Off</div>
+        <div className="border-b border-ink/10 px-4 py-3 text-sm font-semibold">{isAr ? "بيانات الناقل — توقيع مزدوج" : "Hauler Manifests — Dual Sign-Off"}</div>
         <div className="divide-y divide-ink/5">
-          {manifests.length === 0 && <div className="px-4 py-6 text-center text-sm text-ink/50">No hauler manifests.</div>}
+          {manifests.length === 0 && <div className="px-4 py-6 text-center text-sm text-ink/50">{isAr ? "لا توجد بيانات ناقل." : "No hauler manifests."}</div>}
           {manifests.map(m => {
             const sig = sigState[m.id] ?? { rep: m.facility_representative_signed, driver: m.driver_signature_confirmed };
             const bothSigned = sig.rep && sig.driver;
@@ -127,25 +139,25 @@ export default function WasteManagementPage() {
                     <div className="font-mono text-xs text-ink/40">{m.manifest_number}</div>
                     <div className="font-semibold">{m.hauler_company} — <span className="capitalize">{m.waste_type}</span> ({m.total_weight_kg} kg)</div>
                   </div>
-                  <span className="rounded-md bg-ink/5 px-2 py-0.5 text-xs font-semibold capitalize text-ink/60">{m.status.replace("_", " ")}</span>
+                  <span className="rounded-md bg-ink/5 px-2 py-0.5 text-xs font-semibold capitalize text-ink/60">{isAr ? (STATUS_LABEL_AR[m.status] ?? m.status) : m.status.replace("_", " ")}</span>
                 </div>
                 {m.status === "pending" && (
                   <div className="mt-3 flex flex-wrap items-center gap-4">
                     <label className="flex items-center gap-2 text-xs">
                       <input type="checkbox" checked={sig.rep} onChange={e => setSigState(prev => ({ ...prev, [m.id]: { ...sig, rep: e.target.checked } }))} />
-                      Hospital Environmental Safety Officer signed
+                      {isAr ? "وقّع مسؤول السلامة البيئية بالمستشفى" : "Hospital Environmental Safety Officer signed"}
                     </label>
                     <label className="flex items-center gap-2 text-xs">
                       <input type="checkbox" checked={sig.driver} onChange={e => setSigState(prev => ({ ...prev, [m.id]: { ...sig, driver: e.target.checked } }))} />
-                      Licensed Waste Disposal Contractor signed
+                      {isAr ? "وقّع مقاول التخلص من النفايات المرخّص" : "Licensed Waste Disposal Contractor signed"}
                     </label>
                     <button
                       disabled={busy || !bothSigned}
                       onClick={() => markInTransit(m)}
-                      title={!bothSigned ? "Both signatures are required before marking in-transit." : undefined}
+                      title={!bothSigned ? (isAr ? "التوقيعان مطلوبان قبل وضع علامة قيد النقل." : "Both signatures are required before marking in-transit.") : undefined}
                       className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-ink/40"
                     >
-                      Mark In-Transit
+                      {isAr ? "وضع علامة قيد النقل" : "Mark In-Transit"}
                     </button>
                   </div>
                 )}

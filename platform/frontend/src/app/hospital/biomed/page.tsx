@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Wrench, ShieldAlert } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 interface BiomedicalEquipment {
   id: string;
@@ -22,12 +23,12 @@ interface BiomedicalEquipment {
 }
 interface Paginated<T> { count: number; results: T[]; }
 
-const STATUS_LABELS: Record<BiomedicalEquipment["status"], string> = {
-  in_service: "In Service",
-  calibration_due: "Calibration Due",
-  under_repair: "Under Repair",
-  out_of_service: "Out of Service",
-  decommissioned: "Decommissioned",
+const STATUS_LABELS: Record<BiomedicalEquipment["status"], { en: string; ar: string }> = {
+  in_service: { en: "In Service", ar: "قيد الخدمة" },
+  calibration_due: { en: "Calibration Due", ar: "المعايرة مستحقة" },
+  under_repair: { en: "Under Repair", ar: "قيد الإصلاح" },
+  out_of_service: { en: "Out of Service", ar: "خارج الخدمة" },
+  decommissioned: { en: "Decommissioned", ar: "تم إيقاف تشغيله" },
 };
 const STATUS_COLORS: Record<BiomedicalEquipment["status"], string> = {
   in_service: "#22c55e",
@@ -39,6 +40,10 @@ const STATUS_COLORS: Record<BiomedicalEquipment["status"], string> = {
 
 export default function BioMedPage() {
   const { session, isAuthenticated } = useAuth();
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
+  const isAr = lang === "ar";
   const [equipment, setEquipment] = useState<BiomedicalEquipment[] | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -54,9 +59,9 @@ export default function BioMedPage() {
       setEquipment(page.results);
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load equipment."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحميل الأجهزة." : "Failed to load equipment."));
     }
-  }, [session]);
+  }, [session, isAr]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -81,7 +86,7 @@ export default function BioMedPage() {
       void load();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to log calibration."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تسجيل المعايرة." : "Failed to log calibration."));
     } finally {
       setBusy(false);
     }
@@ -91,21 +96,24 @@ export default function BioMedPage() {
     return <div className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold">Sign in required</h1></div>;
   }
   if (fetchError) {
-    return <div role="alert" className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold text-red-400">Unable to load equipment</h1><p className="mt-1 text-sm text-ink/50">{fetchError}</p></div>;
+    return <div role="alert" className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold text-red-400">{isAr ? "تعذر تحميل الأجهزة" : "Unable to load equipment"}</h1><p className="mt-1 text-sm text-ink/50">{fetchError}</p></div>;
   }
   if (equipment === null) {
-    return <div className="mx-auto mt-16 max-w-lg text-center text-sm text-ink/40">Loading equipment...</div>;
+    return <div className="mx-auto mt-16 max-w-lg text-center text-sm text-ink/40">{isAr ? "جارٍ تحميل الأجهزة..." : "Loading equipment..."}</div>;
   }
 
   const dueCount = equipment.filter(e => e.status === "calibration_due").length;
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div dir={isAr ? "rtl" : "ltr"} className="mx-auto max-w-5xl">
       <header className="mb-6 flex items-center justify-between border-b border-ink/10 pb-4">
         <div>
-          <h1 className="flex items-center gap-2 font-heading text-2xl font-bold"><Wrench size={22} /> Biomedical Engineering</h1>
-          <p className="mt-1 text-sm text-ink/50">{equipment.length} tracked device(s), {dueCount} awaiting calibration</p>
+          <h1 className="flex items-center gap-2 font-heading text-2xl font-bold"><Wrench size={22} /> {isAr ? "الهندسة الطبية الحيوية" : "Biomedical Engineering"}</h1>
+          <p className="mt-1 text-sm text-ink/50">{isAr ? `${equipment.length} جهاز (أجهزة) مُتابع، ${dueCount} بانتظار المعايرة` : `${equipment.length} tracked device(s), ${dueCount} awaiting calibration`}</p>
         </div>
+        <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+          {isAr ? "English" : "العربية"}
+        </button>
       </header>
 
       <div className="overflow-hidden rounded-xl border border-ink/10 bg-surface-raised">
@@ -113,14 +121,14 @@ export default function BioMedPage() {
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-ink/10 bg-ink/5">
-                {["Device", "Department", "Next Calibration Due", "Status", "Action"].map(h => (
-                  <th key={h} className="px-4 py-3 text-left font-semibold text-ink/50">{h}</th>
+                {(isAr ? ["الجهاز", "القسم", "موعد المعايرة القادم", "الحالة", "إجراء"] : ["Device", "Department", "Next Calibration Due", "Status", "Action"]).map(h => (
+                  <th key={h} className={`px-4 py-3 font-semibold text-ink/50 ${isAr ? "text-right" : "text-left"}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {equipment.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-ink/50">No biomedical equipment on record.</td></tr>
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-ink/50">{isAr ? "لا توجد أجهزة طبية حيوية مسجلة." : "No biomedical equipment on record."}</td></tr>
               )}
               {equipment.map(item => (
                 <tr key={item.id} className="border-b border-ink/5">
@@ -136,7 +144,7 @@ export default function BioMedPage() {
                       style={{ color: STATUS_COLORS[item.status], backgroundColor: `${STATUS_COLORS[item.status]}1a` }}
                     >
                       {item.status === "calibration_due" && <ShieldAlert size={12} />}
-                      {STATUS_LABELS[item.status]}
+                      {isAr ? STATUS_LABELS[item.status].ar : STATUS_LABELS[item.status].en}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -146,7 +154,7 @@ export default function BioMedPage() {
                           <input
                             value={calForm.performed_by}
                             onChange={e => setCalForm(f => ({ ...f, performed_by: e.target.value }))}
-                            placeholder="Technician"
+                            placeholder={isAr ? "الفني" : "Technician"}
                             className="w-36 rounded-md border border-ink/10 bg-surface px-2 py-1 text-xs"
                           />
                           <input
@@ -160,20 +168,20 @@ export default function BioMedPage() {
                             onClick={() => submitCalibration(item.id)}
                             className="cy-btn cy-btn-primary !min-h-0 !py-1 !px-2 text-xs disabled:opacity-50"
                           >
-                            Log Calibration
+                            {isAr ? "تسجيل المعايرة" : "Log Calibration"}
                           </button>
                         </div>
                       ) : (
                         <button
                           onClick={() => setCalibrating(item.id)}
                           className="rounded-md border border-red-500/40 px-2 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/10"
-                          title="Deployment blocked until a new calibration record is logged"
+                          title={isAr ? "النشر محظور حتى يتم تسجيل معايرة جديدة" : "Deployment blocked until a new calibration record is logged"}
                         >
-                          Log Calibration
+                          {isAr ? "تسجيل المعايرة" : "Log Calibration"}
                         </button>
                       )
                     ) : (
-                      <span className="text-xs font-semibold text-emerald-400">Available for Use</span>
+                      <span className="text-xs font-semibold text-emerald-400">{isAr ? "متاح للاستخدام" : "Available for Use"}</span>
                     )}
                   </td>
                 </tr>

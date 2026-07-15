@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Boxes, FlaskConical, Pill, Users, PackageX, ArrowRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 interface StockItem {
   id: string;
@@ -23,14 +24,18 @@ function unwrap<T>(data: ListOrPaginated<T>): T[] {
 }
 
 const DEEP_LINKS = [
-  { href: "/hospital/inventory", label: "Inventory Management", icon: Boxes, description: "Stock levels, reorder alerts, warehouses" },
-  { href: "/laboratory/worklists", label: "Lab Worklists", icon: FlaskConical, description: "Technologist assignments and workload" },
-  { href: "/pharmacy/dispensing", label: "Pharmacy Dispensing", icon: Pill, description: "Dispensing queue and verification backlog" },
-  { href: "/hospital/hr", label: "HR & Payroll", icon: Users, description: "Staff roster, shifts, leave approvals" },
+  { href: "/hospital/inventory", label_en: "Inventory Management", label_ar: "إدارة المخزون", icon: Boxes, desc_en: "Stock levels, reorder alerts, warehouses", desc_ar: "مستويات المخزون وتنبيهات إعادة الطلب والمستودعات" },
+  { href: "/laboratory/worklists", label_en: "Lab Worklists", label_ar: "قوائم عمل المختبر", icon: FlaskConical, desc_en: "Technologist assignments and workload", desc_ar: "توزيع الفنيين وعبء العمل" },
+  { href: "/pharmacy/dispensing", label_en: "Pharmacy Dispensing", label_ar: "صرف الصيدلية", icon: Pill, desc_en: "Dispensing queue and verification backlog", desc_ar: "طابور الصرف وتراكم التحقق" },
+  { href: "/hospital/hr", label_en: "HR & Payroll", label_ar: "الموارد البشرية والرواتب", icon: Users, desc_en: "Staff roster, shifts, leave approvals", desc_ar: "جدول الموظفين والمناوبات وموافقات الإجازات" },
 ];
 
 export default function DepartmentManagerWorkspace() {
   const { session, isAuthenticated } = useAuth();
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
+  const isAr = lang === "ar";
   const [reorderItems, setReorderItems] = useState<StockItem[] | null>(null);
   const [worklistItems, setWorklistItems] = useState<WorklistItem[]>([]);
   const [dispenseOrders, setDispenseOrders] = useState<DispenseOrder[]>([]);
@@ -51,9 +56,9 @@ export default function DepartmentManagerWorkspace() {
       setDispenseOrders(unwrap(dispenseData));
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load department summary."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحميل ملخص القسم." : "Failed to load department summary."));
     }
-  }, [session]);
+  }, [session, isAr]);
 
   useEffect(() => { void loadData(); }, [loadData]);
 
@@ -65,24 +70,29 @@ export default function DepartmentManagerWorkspace() {
   const openDispensing = dispenseOrders.filter(o => !["dispensed", "cancelled", "returned"].includes(o.status)).length;
 
   return (
-    <div className="mx-auto max-w-6xl">
-      <header className="mb-6">
-        <h1 className="flex items-center gap-2 text-2xl font-bold"><PackageX size={24} /> Department Manager Workspace</h1>
-        <p className="mt-1 text-sm text-white/50">Cross-department oversight: inventory, lab workload, and pharmacy backlog in one view</p>
+    <div dir={isAr ? "rtl" : "ltr"} className="mx-auto max-w-6xl">
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold"><PackageX size={24} /> {isAr ? "مساحة عمل مدير القسم" : "Department Manager Workspace"}</h1>
+          <p className="mt-1 text-sm text-white/50">{isAr ? "إشراف عبر الأقسام: المخزون وعبء عمل المختبر وتراكم الصيدلية في عرض واحد" : "Cross-department oversight: inventory, lab workload, and pharmacy backlog in one view"}</p>
+        </div>
+        <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+          {isAr ? "English" : "العربية"}
+        </button>
       </header>
 
       {fetchError && (
         <div role="alert" className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-          Unable to load department summary: {fetchError}
+          {isAr ? "تعذر تحميل ملخص القسم: " : "Unable to load department summary: "}{fetchError}
         </div>
       )}
 
       {!fetchError && (
         <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
           {[
-            { label: "Items Needing Reorder", value: reorderItems === null ? "..." : reorderItems.length, color: "#ef4444" },
-            { label: "Open Lab Worklist Items", value: pendingWorklist, color: "#3b82f6" },
-            { label: "Open Dispensing Orders", value: openDispensing, color: "#f59e0b" },
+            { label: isAr ? "عناصر تحتاج إعادة طلب" : "Items Needing Reorder", value: reorderItems === null ? "..." : reorderItems.length, color: "#ef4444" },
+            { label: isAr ? "عناصر قائمة عمل المختبر المفتوحة" : "Open Lab Worklist Items", value: pendingWorklist, color: "#3b82f6" },
+            { label: isAr ? "طلبات الصرف المفتوحة" : "Open Dispensing Orders", value: openDispensing, color: "#f59e0b" },
           ].map(m => (
             <div key={m.label} className="rounded-xl border border-white/10 bg-surface-raised p-5 text-center">
               <p className="text-3xl font-bold" style={{ color: m.color }}>{m.value}</p>
@@ -95,14 +105,14 @@ export default function DepartmentManagerWorkspace() {
       {reorderItems !== null && reorderItems.length > 0 && (
         <div className="mb-8 overflow-hidden rounded-xl border border-red-500/20 bg-red-500/5">
           <div className="border-b border-red-500/20 px-4 py-3 text-sm font-semibold text-red-400">
-            Reorder Alerts ({reorderItems.length})
+            {isAr ? `تنبيهات إعادة الطلب (${reorderItems.length})` : `Reorder Alerts (${reorderItems.length})`}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-white/10 bg-white/5">
-                  {["SKU", "Name", "On Hand", "Reorder Level"].map(h => (
-                    <th key={h} className="px-4 py-2 text-left font-semibold text-white/50">{h}</th>
+                  {(isAr ? ["رمز الصنف", "الاسم", "الكمية المتوفرة", "مستوى إعادة الطلب"] : ["SKU", "Name", "On Hand", "Reorder Level"]).map(h => (
+                    <th key={h} className={`px-4 py-2 font-semibold text-white/50 ${isAr ? "text-right" : "text-left"}`}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -121,9 +131,9 @@ export default function DepartmentManagerWorkspace() {
         </div>
       )}
 
-      <h2 className="mb-3 text-lg font-semibold">Management Tools</h2>
+      <h2 className="mb-3 text-lg font-semibold">{isAr ? "أدوات الإدارة" : "Management Tools"}</h2>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {DEEP_LINKS.map(({ href, label, icon: Icon, description }) => (
+        {DEEP_LINKS.map(({ href, label_en, label_ar, icon: Icon, desc_en, desc_ar }) => (
           <Link
             key={href}
             href={href}
@@ -134,11 +144,11 @@ export default function DepartmentManagerWorkspace() {
                 <Icon size={20} />
               </div>
               <div>
-                <p className="font-semibold">{label}</p>
-                <p className="text-sm text-white/50">{description}</p>
+                <p className="font-semibold">{isAr ? label_ar : label_en}</p>
+                <p className="text-sm text-white/50">{isAr ? desc_ar : desc_en}</p>
               </div>
             </div>
-            <ArrowRight size={18} className="text-white/30" />
+            <ArrowRight size={18} className={`text-white/30 ${isAr ? "rotate-180" : ""}`} />
           </Link>
         ))}
       </div>

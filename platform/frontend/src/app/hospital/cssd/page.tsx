@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Zap } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 type LoadStatus = "loading" | "running" | "completed" | "failed";
 type SetStatus = "dirty" | "sterile" | "issued" | "contaminated" | "expired";
@@ -20,10 +21,16 @@ function unwrap<T>(data: Paginated<T> | T[]): T[] {
 }
 
 const LOAD_STATUS_COLOR: Record<LoadStatus, string> = { loading: "#94a3b8", running: "#3b82f6", completed: "#22c55e", failed: "#ef4444" };
+const LOAD_STATUS_LABEL_AR: Record<LoadStatus, string> = { loading: "قيد التحميل", running: "قيد التشغيل", completed: "مكتمل", failed: "فشل" };
 const SET_STATUS_COLOR: Record<SetStatus, string> = { dirty: "#94a3b8", sterile: "#22c55e", issued: "#3b82f6", contaminated: "#ef4444", expired: "#f59e0b" };
+const SET_STATUS_LABEL_AR: Record<SetStatus, string> = { dirty: "متسخ", sterile: "معقم", issued: "تم الصرف", contaminated: "ملوث", expired: "منتهي الصلاحية" };
 
 export default function CSSDPage() {
   const { session, isAuthenticated } = useAuth();
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
+  const isAr = lang === "ar";
   const [loads, setLoads] = useState<SterilizationLoad[] | null>(null);
   const [sets, setSets] = useState<InstrumentSet[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -46,9 +53,9 @@ export default function CSSDPage() {
       setSets(unwrap(setData));
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load CSSD data."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحميل بيانات التعقيم المركزي." : "Failed to load CSSD data."));
     }
-  }, [session]);
+  }, [session, isAr]);
 
   useEffect(() => { void loadData(); }, [loadData]);
 
@@ -65,7 +72,7 @@ export default function CSSDPage() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to create sterilization load."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل إنشاء دفعة التعقيم." : "Failed to create sterilization load."));
     } finally {
       setBusy(false);
     }
@@ -82,7 +89,7 @@ export default function CSSDPage() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to start load."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل بدء الدفعة." : "Failed to start load."));
     } finally {
       setBusy(false);
     }
@@ -99,7 +106,7 @@ export default function CSSDPage() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to complete load."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل إكمال الدفعة." : "Failed to complete load."));
     } finally {
       setBusy(false);
     }
@@ -118,7 +125,7 @@ export default function CSSDPage() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to register instrument set."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تسجيل مجموعة الأدوات." : "Failed to register instrument set."));
     } finally {
       setBusy(false);
     }
@@ -135,7 +142,7 @@ export default function CSSDPage() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to issue instrument set."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل صرف مجموعة الأدوات." : "Failed to issue instrument set."));
     } finally {
       setBusy(false);
     }
@@ -152,7 +159,7 @@ export default function CSSDPage() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to return instrument set."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل إرجاع مجموعة الأدوات." : "Failed to return instrument set."));
     } finally {
       setBusy(false);
     }
@@ -163,50 +170,57 @@ export default function CSSDPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
-      <header className="mb-6">
-        <h1 className="flex items-center gap-2 font-heading text-2xl font-bold"><Zap size={22} /> CSSD — Sterile Supply</h1>
-        <p className="mt-1 text-sm text-ink/50">Sterilization cycles and instrument set tracking</p>
+    <div dir={isAr ? "rtl" : "ltr"} className="mx-auto max-w-5xl">
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 font-heading text-2xl font-bold"><Zap size={22} /> {isAr ? "التعقيم المركزي" : "CSSD — Sterile Supply"}</h1>
+          <p className="mt-1 text-sm text-ink/50">{isAr ? "دورات التعقيم وتتبع مجموعات الأدوات" : "Sterilization cycles and instrument set tracking"}</p>
+        </div>
+        <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+          {isAr ? "English" : "العربية"}
+        </button>
       </header>
 
       {fetchError && <div role="alert" className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">{fetchError}</div>}
 
       <div className="mb-8">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-heading text-lg font-bold">Sterilization Loads</h2>
-          <button onClick={() => setShowLoadForm(v => !v)} className="cy-btn cy-btn-primary !min-h-0 !py-2 !px-4 text-sm">+ New Load</button>
+          <h2 className="font-heading text-lg font-bold">{isAr ? "دفعات التعقيم" : "Sterilization Loads"}</h2>
+          <button onClick={() => setShowLoadForm(v => !v)} className="cy-btn cy-btn-primary !min-h-0 !py-2 !px-4 text-sm">{isAr ? "+ دفعة جديدة" : "+ New Load"}</button>
         </div>
         {showLoadForm && (
           <div className="cy-card mb-4 p-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <input value={loadForm.loadNumber} onChange={e => setLoadForm(f => ({ ...f, loadNumber: e.target.value }))} placeholder="Load number" className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
-              <input value={loadForm.sterilizerId} onChange={e => setLoadForm(f => ({ ...f, sterilizerId: e.target.value }))} placeholder="Sterilizer ID" className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
+              <input value={loadForm.loadNumber} onChange={e => setLoadForm(f => ({ ...f, loadNumber: e.target.value }))} placeholder={isAr ? "رقم الدفعة" : "Load number"} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
+              <input value={loadForm.sterilizerId} onChange={e => setLoadForm(f => ({ ...f, sterilizerId: e.target.value }))} placeholder={isAr ? "معرّف جهاز التعقيم" : "Sterilizer ID"} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
               <select value={loadForm.cycleType} onChange={e => setLoadForm(f => ({ ...f, cycleType: e.target.value }))} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm">
-                <option value="steam">Steam Autoclave</option><option value="eto">Ethylene Oxide</option><option value="plasma">H2O2 Plasma</option>
+                <option value="steam">{isAr ? "تعقيم بخاري" : "Steam Autoclave"}</option>
+                <option value="eto">{isAr ? "أكسيد الإيثيلين" : "Ethylene Oxide"}</option>
+                <option value="plasma">{isAr ? "بلازما H2O2" : "H2O2 Plasma"}</option>
               </select>
             </div>
             <div className="mt-3 flex gap-2">
-              <button onClick={createLoad} disabled={busy || !loadForm.loadNumber || !loadForm.sterilizerId} className="cy-btn cy-btn-primary !min-h-0 !py-1.5 !px-3 text-xs disabled:opacity-50">Create</button>
-              <button onClick={() => setShowLoadForm(false)} className="cy-btn cy-btn-ghost !min-h-0 !py-1.5 !px-3 text-xs">Cancel</button>
+              <button onClick={createLoad} disabled={busy || !loadForm.loadNumber || !loadForm.sterilizerId} className="cy-btn cy-btn-primary !min-h-0 !py-1.5 !px-3 text-xs disabled:opacity-50">{isAr ? "إنشاء" : "Create"}</button>
+              <button onClick={() => setShowLoadForm(false)} className="cy-btn cy-btn-ghost !min-h-0 !py-1.5 !px-3 text-xs">{isAr ? "إلغاء" : "Cancel"}</button>
             </div>
           </div>
         )}
         <div className="grid gap-2">
-          {loads === null && <div className="cy-card p-4 text-center text-sm text-ink/40">Loading…</div>}
-          {loads !== null && loads.length === 0 && <div className="cy-card p-4 text-center text-sm text-ink/40">No sterilization loads yet.</div>}
+          {loads === null && <div className="cy-card p-4 text-center text-sm text-ink/40">{isAr ? "جارٍ التحميل…" : "Loading…"}</div>}
+          {loads !== null && loads.length === 0 && <div className="cy-card p-4 text-center text-sm text-ink/40">{isAr ? "لا توجد دفعات تعقيم بعد." : "No sterilization loads yet."}</div>}
           {loads?.map(l => (
             <div key={l.id} className="cy-card flex items-center justify-between p-3">
               <div>
                 <span className="font-mono text-sm font-semibold">{l.load_number}</span>
                 <span className="ml-2 text-xs text-ink/50">{l.sterilizer_id} · {l.cycle_type}</span>
-                <span className="ml-2 rounded-full px-2 py-0.5 text-xs font-bold capitalize" style={{ background: `${LOAD_STATUS_COLOR[l.status]}22`, color: LOAD_STATUS_COLOR[l.status] }}>{l.status}</span>
+                <span className="ml-2 rounded-full px-2 py-0.5 text-xs font-bold capitalize" style={{ background: `${LOAD_STATUS_COLOR[l.status]}22`, color: LOAD_STATUS_COLOR[l.status] }}>{isAr ? LOAD_STATUS_LABEL_AR[l.status] : l.status}</span>
               </div>
               <div className="flex gap-2">
-                {l.status === "loading" && <button disabled={busy} onClick={() => startLoad(l.id)} className="rounded-md border border-brand-400/40 px-2.5 py-1 text-xs font-semibold text-brand-300 hover:bg-brand-500/10 disabled:opacity-40">Start Cycle</button>}
+                {l.status === "loading" && <button disabled={busy} onClick={() => startLoad(l.id)} className="rounded-md border border-brand-400/40 px-2.5 py-1 text-xs font-semibold text-brand-300 hover:bg-brand-500/10 disabled:opacity-40">{isAr ? "بدء الدورة" : "Start Cycle"}</button>}
                 {l.status === "running" && (
                   <>
-                    <button disabled={busy} onClick={() => completeLoad(l.id, "pass")} className="rounded-md border border-emerald-500/40 px-2.5 py-1 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40">BI Pass</button>
-                    <button disabled={busy} onClick={() => completeLoad(l.id, "fail")} className="rounded-md border border-red-500/40 px-2.5 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/10 disabled:opacity-40">BI Fail</button>
+                    <button disabled={busy} onClick={() => completeLoad(l.id, "pass")} className="rounded-md border border-emerald-500/40 px-2.5 py-1 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40">{isAr ? "نجح المؤشر الحيوي" : "BI Pass"}</button>
+                    <button disabled={busy} onClick={() => completeLoad(l.id, "fail")} className="rounded-md border border-red-500/40 px-2.5 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/10 disabled:opacity-40">{isAr ? "فشل المؤشر الحيوي" : "BI Fail"}</button>
                   </>
                 )}
               </div>
@@ -217,36 +231,36 @@ export default function CSSDPage() {
 
       <div>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-heading text-lg font-bold">Instrument Sets</h2>
-          <button onClick={() => setShowSetForm(v => !v)} className="cy-btn cy-btn-primary !min-h-0 !py-2 !px-4 text-sm">+ Register Set</button>
+          <h2 className="font-heading text-lg font-bold">{isAr ? "مجموعات الأدوات" : "Instrument Sets"}</h2>
+          <button onClick={() => setShowSetForm(v => !v)} className="cy-btn cy-btn-primary !min-h-0 !py-2 !px-4 text-sm">{isAr ? "+ تسجيل مجموعة" : "+ Register Set"}</button>
         </div>
         {showSetForm && (
           <div className="cy-card mb-4 p-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <input value={setForm.setCode} onChange={e => setSetForm(f => ({ ...f, setCode: e.target.value }))} placeholder="Set code" className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
-              <input value={setForm.name} onChange={e => setSetForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Major Laparotomy Set" className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
+              <input value={setForm.setCode} onChange={e => setSetForm(f => ({ ...f, setCode: e.target.value }))} placeholder={isAr ? "رمز المجموعة" : "Set code"} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
+              <input value={setForm.name} onChange={e => setSetForm(f => ({ ...f, name: e.target.value }))} placeholder={isAr ? "مثال: مجموعة فتح البطن الكبرى" : "e.g. Major Laparotomy Set"} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
             </div>
             <div className="mt-3 flex gap-2">
-              <button onClick={createSet} disabled={busy || !setForm.setCode || !setForm.name} className="cy-btn cy-btn-primary !min-h-0 !py-1.5 !px-3 text-xs disabled:opacity-50">Register</button>
-              <button onClick={() => setShowSetForm(false)} className="cy-btn cy-btn-ghost !min-h-0 !py-1.5 !px-3 text-xs">Cancel</button>
+              <button onClick={createSet} disabled={busy || !setForm.setCode || !setForm.name} className="cy-btn cy-btn-primary !min-h-0 !py-1.5 !px-3 text-xs disabled:opacity-50">{isAr ? "تسجيل" : "Register"}</button>
+              <button onClick={() => setShowSetForm(false)} className="cy-btn cy-btn-ghost !min-h-0 !py-1.5 !px-3 text-xs">{isAr ? "إلغاء" : "Cancel"}</button>
             </div>
           </div>
         )}
         <div className="grid gap-2">
-          {sets.length === 0 && <div className="cy-card p-4 text-center text-sm text-ink/40">No instrument sets registered.</div>}
+          {sets.length === 0 && <div className="cy-card p-4 text-center text-sm text-ink/40">{isAr ? "لا توجد مجموعات أدوات مسجلة." : "No instrument sets registered."}</div>}
           {sets.map(s => (
             <div key={s.id} className="cy-card flex items-center justify-between p-3">
               <div>
                 <span className="font-mono text-sm font-semibold">{s.set_code}</span>
                 <span className="ml-2 text-sm text-ink/70">{s.name}</span>
-                <span className="ml-2 rounded-full px-2 py-0.5 text-xs font-bold capitalize" style={{ background: `${SET_STATUS_COLOR[s.status]}22`, color: SET_STATUS_COLOR[s.status] }}>{s.status}</span>
+                <span className="ml-2 rounded-full px-2 py-0.5 text-xs font-bold capitalize" style={{ background: `${SET_STATUS_COLOR[s.status]}22`, color: SET_STATUS_COLOR[s.status] }}>{isAr ? SET_STATUS_LABEL_AR[s.status] : s.status}</span>
               </div>
               <div className="flex gap-2">
-                {s.status === "sterile" && <button disabled={busy} onClick={() => issueSet(s.id)} className="rounded-md border border-brand-400/40 px-2.5 py-1 text-xs font-semibold text-brand-300 hover:bg-brand-500/10 disabled:opacity-40">Issue</button>}
+                {s.status === "sterile" && <button disabled={busy} onClick={() => issueSet(s.id)} className="rounded-md border border-brand-400/40 px-2.5 py-1 text-xs font-semibold text-brand-300 hover:bg-brand-500/10 disabled:opacity-40">{isAr ? "صرف" : "Issue"}</button>}
                 {s.status === "issued" && (
                   <>
-                    <button disabled={busy} onClick={() => returnSet(s.id, false)} className="rounded-md border border-emerald-500/40 px-2.5 py-1 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40">Return Clean</button>
-                    <button disabled={busy} onClick={() => returnSet(s.id, true)} className="rounded-md border border-red-500/40 px-2.5 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/10 disabled:opacity-40">Report Contaminated</button>
+                    <button disabled={busy} onClick={() => returnSet(s.id, false)} className="rounded-md border border-emerald-500/40 px-2.5 py-1 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40">{isAr ? "إرجاع نظيف" : "Return Clean"}</button>
+                    <button disabled={busy} onClick={() => returnSet(s.id, true)} className="rounded-md border border-red-500/40 px-2.5 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/10 disabled:opacity-40">{isAr ? "الإبلاغ عن تلوث" : "Report Contaminated"}</button>
                   </>
                 )}
               </div>

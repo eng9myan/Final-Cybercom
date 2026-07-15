@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Scissors } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 type CaseStatus = "scheduled" | "pre_op" | "intra_op" | "post_op" | "completed" | "cancelled";
 
@@ -24,7 +25,9 @@ const STATUS_COLOR: Record<string, string> = { scheduled: "#22D3EE", pre_op: "#a
 
 export default function ORPage() {
   const { session, isAuthenticated } = useAuth();
-  const [lang, setLang] = useState<"en" | "ar">("en");
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
   const [cases, setCases] = useState<SurgicalCase[] | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);

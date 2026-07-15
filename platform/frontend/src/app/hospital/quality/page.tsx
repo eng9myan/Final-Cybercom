@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { LineChart } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 interface QualityIndicator {
   id: string;
@@ -28,6 +29,10 @@ interface Paginated<T> { count: number; results: T[]; }
 
 export default function QualityPage() {
   const { session, isAuthenticated } = useAuth();
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
+  const isAr = lang === "ar";
   const [indicators, setIndicators] = useState<QualityIndicator[] | null>(null);
   const [measurements, setMeasurements] = useState<QualityMeasurement[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -50,9 +55,9 @@ export default function QualityPage() {
       setMeasurements(measPage.results);
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load quality data."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحميل بيانات الجودة." : "Failed to load quality data."));
     }
-  }, [session]);
+  }, [session, isAr]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -75,7 +80,7 @@ export default function QualityPage() {
       void load();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to record measurement."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تسجيل القياس." : "Failed to record measurement."));
     } finally {
       setBusy(false);
     }
@@ -85,19 +90,22 @@ export default function QualityPage() {
     return <div className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold">Sign in required</h1></div>;
   }
   if (fetchError) {
-    return <div role="alert" className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold text-red-400">Unable to load quality data</h1><p className="mt-1 text-sm text-ink/50">{fetchError}</p></div>;
+    return <div role="alert" className="mx-auto mt-16 max-w-lg text-center"><h1 className="text-xl font-bold text-red-400">{isAr ? "تعذر تحميل بيانات الجودة" : "Unable to load quality data"}</h1><p className="mt-1 text-sm text-ink/50">{fetchError}</p></div>;
   }
   if (indicators === null) {
-    return <div className="mx-auto mt-16 max-w-lg text-center text-sm text-ink/40">Loading...</div>;
+    return <div className="mx-auto mt-16 max-w-lg text-center text-sm text-ink/40">{isAr ? "جارٍ التحميل..." : "Loading..."}</div>;
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div dir={isAr ? "rtl" : "ltr"} className="mx-auto max-w-5xl">
       <header className="mb-6 flex items-center justify-between border-b border-ink/10 pb-4">
         <div>
-          <h1 className="flex items-center gap-2 font-heading text-2xl font-bold"><LineChart size={22} /> Quality Management</h1>
-          <p className="mt-1 text-sm text-ink/50">{indicators.length} indicator(s) tracked</p>
+          <h1 className="flex items-center gap-2 font-heading text-2xl font-bold"><LineChart size={22} /> {isAr ? "إدارة الجودة" : "Quality Management"}</h1>
+          <p className="mt-1 text-sm text-ink/50">{isAr ? `${indicators.length} مؤشر (مؤشرات) تحت المتابعة` : `${indicators.length} indicator(s) tracked`}</p>
         </div>
+        <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+          {isAr ? "English" : "العربية"}
+        </button>
       </header>
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -108,35 +116,35 @@ export default function QualityPage() {
               <div className="text-sm font-semibold">{ind.name}</div>
               <div className="mt-2 text-2xl font-bold">{latest?.value != null ? `${latest.value}${ind.unit_of_measure}` : "—"}</div>
               <div className="mt-1 text-xs text-ink/50">
-                Target: {ind.target_value ?? "—"}{ind.unit_of_measure} ({ind.direction === "lower_is_better" ? "lower is better" : "higher is better"})
+                {isAr ? "الهدف: " : "Target: "}{ind.target_value ?? "—"}{ind.unit_of_measure} ({ind.direction === "lower_is_better" ? (isAr ? "الأقل أفضل" : "lower is better") : (isAr ? "الأعلى أفضل" : "higher is better")})
               </div>
               {latest && (
                 <div className={`mt-2 text-xs font-semibold ${latest.meets_target ? "text-emerald-400" : "text-red-400"}`}>
-                  {latest.meets_target ? "✓ Target Achieved" : "✕ Remedial Action Flagged"} (raw: {latest.numerator}/{latest.denominator})
+                  {latest.meets_target ? (isAr ? "✓ تم تحقيق الهدف" : "✓ Target Achieved") : (isAr ? "✕ تم رفع إجراء تصحيحي" : "✕ Remedial Action Flagged")} ({isAr ? "الخام" : "raw"}: {latest.numerator}/{latest.denominator})
                 </div>
               )}
             </div>
           );
         })}
-        {indicators.length === 0 && <div className="col-span-full text-sm text-ink/50">No indicators defined yet.</div>}
+        {indicators.length === 0 && <div className="col-span-full text-sm text-ink/50">{isAr ? "لا توجد مؤشرات معرّفة بعد." : "No indicators defined yet."}</div>}
       </div>
 
       <div className="overflow-hidden rounded-xl border border-ink/10 bg-surface-raised">
-        <div className="border-b border-ink/10 px-4 py-3 text-sm font-semibold">Record a Measurement</div>
+        <div className="border-b border-ink/10 px-4 py-3 text-sm font-semibold">{isAr ? "تسجيل قياس" : "Record a Measurement"}</div>
         <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-5">
           <select value={form.indicator} onChange={e => setForm(f => ({ ...f, indicator: e.target.value }))} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm sm:col-span-2">
-            <option value="">Select indicator...</option>
+            <option value="">{isAr ? "اختر المؤشر..." : "Select indicator..."}</option>
             {indicators.map(ind => <option key={ind.id} value={ind.id}>{ind.name}</option>)}
           </select>
           <input type="date" value={form.period_start} onChange={e => setForm(f => ({ ...f, period_start: e.target.value }))} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
           <input type="date" value={form.period_end} onChange={e => setForm(f => ({ ...f, period_end: e.target.value }))} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
           <div />
-          <input type="number" value={form.numerator} onChange={e => setForm(f => ({ ...f, numerator: e.target.value }))} placeholder="Numerator (e.g. successful)" className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
-          <input type="number" value={form.denominator} onChange={e => setForm(f => ({ ...f, denominator: e.target.value }))} placeholder="Denominator (e.g. total)" className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
+          <input type="number" value={form.numerator} onChange={e => setForm(f => ({ ...f, numerator: e.target.value }))} placeholder={isAr ? "البسط (مثال: ناجح)" : "Numerator (e.g. successful)"} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
+          <input type="number" value={form.denominator} onChange={e => setForm(f => ({ ...f, denominator: e.target.value }))} placeholder={isAr ? "المقام (مثال: الإجمالي)" : "Denominator (e.g. total)"} className="rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm" />
           <div className="flex items-center rounded-lg border border-ink/10 bg-ink/5 px-3 py-2 text-sm text-ink/60">
-            Computed rate: <strong className="ml-1">{livePreview === null ? "—" : `${livePreview}%`}</strong>
+            {isAr ? "المعدل المحسوب: " : "Computed rate: "}<strong className="ml-1">{livePreview === null ? "—" : `${livePreview}%`}</strong>
           </div>
-          <button disabled={busy || !form.indicator || !form.denominator} onClick={() => void submitMeasurement()} className="cy-btn cy-btn-primary disabled:opacity-50">Save Measurement</button>
+          <button disabled={busy || !form.indicator || !form.denominator} onClick={() => void submitMeasurement()} className="cy-btn cy-btn-primary disabled:opacity-50">{isAr ? "حفظ القياس" : "Save Measurement"}</button>
         </div>
       </div>
     </div>

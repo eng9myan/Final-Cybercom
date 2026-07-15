@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Siren } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 type ESILevel = 1 | 2 | 3 | 4 | 5;
 type VisitStatus = "triage" | "fast_track" | "resuscitation" | "observation" | "admitted" | "discharged";
@@ -53,7 +54,9 @@ function calcAge(dob: string): number {
 
 export default function EmergencyPage() {
   const { session, isAuthenticated } = useAuth();
-  const [lang, setLang] = useState<"en" | "ar">("en");
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
   const [visits, setVisits] = useState<EmergencyVisit[] | null>(null);
   const [triages, setTriages] = useState<EmergencyTriage[]>([]);
   const [observations, setObservations] = useState<EmergencyObservation[]>([]);

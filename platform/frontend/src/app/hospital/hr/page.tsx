@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Users, Check, XIcon, Download } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -18,6 +19,10 @@ interface Paginated<T> { count: number; results: T[]; }
 
 export default function HRPayroll() {
   const { session, isAuthenticated } = useAuth();
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
+  const isAr = lang === "ar";
   const [departments, setDepartments] = useState<Department[]>([]);
   const [employees, setEmployees] = useState<Employee[] | null>(null);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
@@ -50,9 +55,9 @@ export default function HRPayroll() {
       setSwapRequests(swapPage.results);
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load HR data."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحميل بيانات الموارد البشرية." : "Failed to load HR data."));
     }
-  }, [session]);
+  }, [session, isAr]);
 
   useEffect(() => { void loadData(); }, [loadData]);
 
@@ -65,7 +70,8 @@ export default function HRPayroll() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || `Failed to ${decision} swap request.`);
+      const decisionLabelAr = decision === "approve" ? "الموافقة على" : "رفض";
+      setFetchError(detail || (isAr ? `فشل ${decisionLabelAr} طلب التبديل.` : `Failed to ${decision} swap request.`));
     }
   }
 
@@ -91,7 +97,7 @@ export default function HRPayroll() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to generate payslip."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل إنشاء قسيمة الراتب." : "Failed to generate payslip."));
     } finally {
       setGeneratingPayslip(false);
     }
@@ -103,7 +109,7 @@ export default function HRPayroll() {
       const resp = await fetch(`${API_BASE}/api/v1/erp/payroll/runs/${runId}/export-wps/`, {
         headers: { Authorization: `Bearer ${session.accessToken}`, "X-Tenant-ID": session.tenantId },
       });
-      if (!resp.ok) throw new Error(`Export failed (${resp.status})`);
+      if (!resp.ok) throw new Error(`${isAr ? "فشل التصدير" : "Export failed"} (${resp.status})`);
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -112,7 +118,7 @@ export default function HRPayroll() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      setFetchError(err instanceof Error ? err.message : "Failed to export WPS file.");
+      setFetchError(err instanceof Error ? err.message : isAr ? "فشل تصدير ملف WPS." : "Failed to export WPS file.");
     }
   }
 
@@ -128,7 +134,7 @@ export default function HRPayroll() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || "Failed to update leave request.");
+      setFetchError(detail || (isAr ? "فشل تحديث طلب الإجازة." : "Failed to update leave request."));
     }
   }
 
@@ -138,19 +144,19 @@ export default function HRPayroll() {
   if (fetchError) {
     return (
       <div role="alert" className="mx-auto mt-16 max-w-lg text-center">
-        <h1 className="text-xl font-bold text-red-400">Unable to load HR data</h1>
+        <h1 className="text-xl font-bold text-red-400">{isAr ? "تعذر تحميل بيانات الموارد البشرية" : "Unable to load HR data"}</h1>
         <p className="mt-2 text-white/50">{fetchError}</p>
       </div>
     );
   }
   if (employees === null) {
-    return <div className="mt-16 text-center text-white/50">Loading live HR data...</div>;
+    return <div className="mt-16 text-center text-white/50">{isAr ? "جارٍ تحميل بيانات الموارد البشرية المباشرة..." : "Loading live HR data..."}</div>;
   }
 
-  const departmentName = (id: string | null) => departments.find(d => d.id === id)?.name || "Unassigned";
+  const departmentName = (id: string | null) => departments.find(d => d.id === id)?.name || (isAr ? "غير معيّن" : "Unassigned");
   const employeeName = (id: string) => {
     const e = employees.find(x => x.id === id);
-    return e ? `${e.first_name} ${e.last_name}` : "Unknown employee";
+    return e ? `${e.first_name} ${e.last_name}` : (isAr ? "موظف غير معروف" : "Unknown employee");
   };
   const pendingLeave = leaveRequests.filter(l => l.status === "pending");
   const recentHires = employees
@@ -165,47 +171,52 @@ export default function HRPayroll() {
   const pendingSwaps = swapRequests.filter(s => s.status === "pending");
 
   return (
-    <div className="mx-auto max-w-6xl">
-      <header className="mb-6">
-        <h1 className="flex items-center gap-2 text-2xl font-bold"><Users size={22} /> HR & Payroll</h1>
-        <p className="mt-1 text-sm text-white/50">Live workforce data for this tenant</p>
+    <div dir={isAr ? "rtl" : "ltr"} className="mx-auto max-w-6xl">
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold"><Users size={22} /> {isAr ? "الموارد البشرية والرواتب" : "HR & Payroll"}</h1>
+          <p className="mt-1 text-sm text-white/50">{isAr ? "بيانات القوى العاملة المباشرة لهذا المستأجر" : "Live workforce data for this tenant"}</p>
+        </div>
+        <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+          {isAr ? "English" : "العربية"}
+        </button>
       </header>
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <div className="rounded-xl border border-white/10 bg-surface-raised p-4">
-          <p className="text-xs text-white/50">Employees</p>
+          <p className="text-xs text-white/50">{isAr ? "الموظفون" : "Employees"}</p>
           <p className="mt-1 text-xl font-bold text-brand-300">{employees.length}</p>
         </div>
         <div className="rounded-xl border border-white/10 bg-surface-raised p-4">
-          <p className="text-xs text-white/50">Departments</p>
+          <p className="text-xs text-white/50">{isAr ? "الأقسام" : "Departments"}</p>
           <p className="mt-1 text-xl font-bold text-purple-400">{departments.length}</p>
         </div>
         <div className="rounded-xl border border-white/10 bg-surface-raised p-4">
-          <p className="text-xs text-white/50">Pending Leave</p>
+          <p className="text-xs text-white/50">{isAr ? "إجازات معلقة" : "Pending Leave"}</p>
           <p className="mt-1 text-xl font-bold text-amber-400">{pendingLeave.length}</p>
         </div>
         <div className="rounded-xl border border-white/10 bg-surface-raised p-4">
-          <p className="text-xs text-white/50">Latest Payroll Net</p>
+          <p className="text-xs text-white/50">{isAr ? "صافي آخر رواتب" : "Latest Payroll Net"}</p>
           <p className="mt-1 text-xl font-bold text-green-400">
             {latestPayrollRun ? `SAR ${parseFloat(latestPayrollRun.total_net).toLocaleString()}` : "—"}
           </p>
         </div>
       </div>
 
-      <h2 className="mb-3 text-lg font-semibold">Pending Leave Requests</h2>
+      <h2 className="mb-3 text-lg font-semibold">{isAr ? "طلبات الإجازة المعلقة" : "Pending Leave Requests"}</h2>
       <div className="mb-8 overflow-hidden rounded-xl border border-white/10 bg-surface-raised">
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                {["Employee", "Type", "Start", "End", "Reason", "Action"].map(h => (
-                  <th key={h} className="px-4 py-3 text-left font-semibold text-white/50">{h}</th>
+                {(isAr ? ["الموظف", "النوع", "البداية", "النهاية", "السبب", "إجراء"] : ["Employee", "Type", "Start", "End", "Reason", "Action"]).map(h => (
+                  <th key={h} className={`px-4 py-3 font-semibold text-white/50 ${isAr ? "text-right" : "text-left"}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {pendingLeave.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-6 text-center text-white/50">No pending leave requests.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-6 text-center text-white/50">{isAr ? "لا توجد طلبات إجازة معلقة." : "No pending leave requests."}</td></tr>
               )}
               {pendingLeave.map(l => (
                 <tr key={l.id} className="border-b border-white/5">
@@ -227,20 +238,20 @@ export default function HRPayroll() {
         </div>
       </div>
 
-      <h2 className="mb-3 text-lg font-semibold">Recently Hired (last 30 days)</h2>
+      <h2 className="mb-3 text-lg font-semibold">{isAr ? "التعيينات الحديثة (آخر 30 يوماً)" : "Recently Hired (last 30 days)"}</h2>
       <div className="mb-8 overflow-hidden rounded-xl border border-white/10 bg-surface-raised">
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                {["Name", "Department", "Job Title", "Hire Date", "Status"].map(h => (
-                  <th key={h} className="px-4 py-3 text-left font-semibold text-white/50">{h}</th>
+                {(isAr ? ["الاسم", "القسم", "المسمى الوظيفي", "تاريخ التعيين", "الحالة"] : ["Name", "Department", "Job Title", "Hire Date", "Status"]).map(h => (
+                  <th key={h} className={`px-4 py-3 font-semibold text-white/50 ${isAr ? "text-right" : "text-left"}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {recentHires.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-white/50">No new hires in the last 30 days.</td></tr>
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-white/50">{isAr ? "لا يوجد موظفون جدد في آخر 30 يوماً." : "No new hires in the last 30 days."}</td></tr>
               )}
               {recentHires.map(e => (
                 <tr key={e.id} className="border-b border-white/5">
@@ -256,27 +267,27 @@ export default function HRPayroll() {
         </div>
       </div>
 
-      <h2 className="mb-3 text-lg font-semibold">Payroll Runs</h2>
+      <h2 className="mb-3 text-lg font-semibold">{isAr ? "دورات الرواتب" : "Payroll Runs"}</h2>
       <div className="mb-4 rounded-xl border border-white/10 bg-surface-raised p-4">
-        <p className="mb-2 text-xs font-semibold text-white/50">Generate Payslip (overtime + shift differential calculated from real attendance/roster data)</p>
+        <p className="mb-2 text-xs font-semibold text-white/50">{isAr ? "إنشاء قسيمة راتب (العمل الإضافي وبدل المناوبة محسوبان من بيانات الحضور/الجدول الفعلية)" : "Generate Payslip (overtime + shift differential calculated from real attendance/roster data)"}</p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-6">
           <select value={payslipForm.runId} onChange={e => setPayslipForm(f => ({ ...f, runId: e.target.value }))} className="rounded-lg border border-white/10 bg-surface px-2 py-1.5 text-sm">
-            <option value="">Payroll run…</option>
+            <option value="">{isAr ? "دورة الرواتب…" : "Payroll run…"}</option>
             {payrollRuns.map(r => <option key={r.id} value={r.id}>{r.run_date}</option>)}
           </select>
           <select value={payslipForm.employeeId} onChange={e => setPayslipForm(f => ({ ...f, employeeId: e.target.value }))} className="rounded-lg border border-white/10 bg-surface px-2 py-1.5 text-sm">
-            <option value="">Employee…</option>
+            <option value="">{isAr ? "الموظف…" : "Employee…"}</option>
             {employees.map(e => <option key={e.id} value={e.id}>{e.first_name} {e.last_name}</option>)}
           </select>
           <input type="date" value={payslipForm.periodStart} onChange={e => setPayslipForm(f => ({ ...f, periodStart: e.target.value }))} className="rounded-lg border border-white/10 bg-surface px-2 py-1.5 text-sm" />
           <input type="date" value={payslipForm.periodEnd} onChange={e => setPayslipForm(f => ({ ...f, periodEnd: e.target.value }))} className="rounded-lg border border-white/10 bg-surface px-2 py-1.5 text-sm" />
-          <input type="number" value={payslipForm.allowances} onChange={e => setPayslipForm(f => ({ ...f, allowances: e.target.value }))} placeholder="Allowances" className="rounded-lg border border-white/10 bg-surface px-2 py-1.5 text-sm" />
+          <input type="number" value={payslipForm.allowances} onChange={e => setPayslipForm(f => ({ ...f, allowances: e.target.value }))} placeholder={isAr ? "البدلات" : "Allowances"} className="rounded-lg border border-white/10 bg-surface px-2 py-1.5 text-sm" />
           <button
             disabled={generatingPayslip || !payslipForm.runId || !payslipForm.employeeId || !payslipForm.periodStart || !payslipForm.periodEnd}
             onClick={generatePayslip}
             className="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
           >
-            {generatingPayslip ? "Generating…" : "Generate"}
+            {generatingPayslip ? (isAr ? "جارٍ الإنشاء…" : "Generating…") : (isAr ? "إنشاء" : "Generate")}
           </button>
         </div>
       </div>
@@ -285,14 +296,14 @@ export default function HRPayroll() {
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                {["Run Date", "Status", "Gross", "Deductions", "Net", ""].map(h => (
-                  <th key={h} className="px-4 py-3 text-left font-semibold text-white/50">{h}</th>
+                {(isAr ? ["تاريخ الدورة", "الحالة", "الإجمالي", "الاستقطاعات", "الصافي", ""] : ["Run Date", "Status", "Gross", "Deductions", "Net", ""]).map(h => (
+                  <th key={h} className={`px-4 py-3 font-semibold text-white/50 ${isAr ? "text-right" : "text-left"}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {payrollRuns.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-6 text-center text-white/50">No payroll runs recorded yet.</td></tr>
+                <tr><td colSpan={6} className="px-4 py-6 text-center text-white/50">{isAr ? "لا توجد دورات رواتب مسجلة بعد." : "No payroll runs recorded yet."}</td></tr>
               )}
               {payrollRuns.map(r => (
                 <tr key={r.id} className="border-b border-white/5">
@@ -313,24 +324,26 @@ export default function HRPayroll() {
         </div>
       </div>
 
-      <h2 className="mb-3 text-lg font-semibold">Shift Roster — Upcoming</h2>
+      <h2 className="mb-3 text-lg font-semibold">{isAr ? "جدول المناوبات — القادمة" : "Shift Roster — Upcoming"}</h2>
       <p className="mb-3 text-xs text-white/40">
-        {shiftTemplates.length} shift template(s) defined
-        {shiftTemplates.some(t => t.is_night_shift) && ` (night shifts carry a ${shiftTemplates.find(t => t.is_night_shift)?.differential_percent}% differential)`}
+        {isAr ? `${shiftTemplates.length} قالب (قوالب) مناوبة معرّف` : `${shiftTemplates.length} shift template(s) defined`}
+        {shiftTemplates.some(t => t.is_night_shift) && (isAr
+          ? ` (المناوبات الليلية تحمل بدل ${shiftTemplates.find(t => t.is_night_shift)?.differential_percent}%)`
+          : ` (night shifts carry a ${shiftTemplates.find(t => t.is_night_shift)?.differential_percent}% differential)`)}
       </p>
       <div className="mb-8 overflow-hidden rounded-xl border border-white/10 bg-surface-raised">
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                {["Date", "Employee", "Shift", "Status"].map(h => (
-                  <th key={h} className="px-4 py-3 text-left font-semibold text-white/50">{h}</th>
+                {(isAr ? ["التاريخ", "الموظف", "المناوبة", "الحالة"] : ["Date", "Employee", "Shift", "Status"]).map(h => (
+                  <th key={h} className={`px-4 py-3 font-semibold text-white/50 ${isAr ? "text-right" : "text-left"}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {upcomingShifts.length === 0 && (
-                <tr><td colSpan={4} className="px-4 py-6 text-center text-white/50">No upcoming shifts scheduled.</td></tr>
+                <tr><td colSpan={4} className="px-4 py-6 text-center text-white/50">{isAr ? "لا توجد مناوبات قادمة مجدولة." : "No upcoming shifts scheduled."}</td></tr>
               )}
               {upcomingShifts.map(a => (
                 <tr key={a.id} className="border-b border-white/5">
@@ -345,25 +358,25 @@ export default function HRPayroll() {
         </div>
       </div>
 
-      <h2 className="mb-3 text-lg font-semibold">Pending Shift Swap Requests</h2>
+      <h2 className="mb-3 text-lg font-semibold">{isAr ? "طلبات تبديل المناوبات المعلقة" : "Pending Shift Swap Requests"}</h2>
       <div className="overflow-hidden rounded-xl border border-white/10 bg-surface-raised">
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                {["Reason", "Covering Employee", "Action"].map(h => (
-                  <th key={h} className="px-4 py-3 text-left font-semibold text-white/50">{h}</th>
+                {(isAr ? ["السبب", "الموظف البديل", "إجراء"] : ["Reason", "Covering Employee", "Action"]).map(h => (
+                  <th key={h} className={`px-4 py-3 font-semibold text-white/50 ${isAr ? "text-right" : "text-left"}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {pendingSwaps.length === 0 && (
-                <tr><td colSpan={3} className="px-4 py-6 text-center text-white/50">No pending swap requests.</td></tr>
+                <tr><td colSpan={3} className="px-4 py-6 text-center text-white/50">{isAr ? "لا توجد طلبات تبديل معلقة." : "No pending swap requests."}</td></tr>
               )}
               {pendingSwaps.map(s => (
                 <tr key={s.id} className="border-b border-white/5">
                   <td className="px-4 py-3 text-white/60">{s.reason || "—"}</td>
-                  <td className="px-4 py-3 text-white/60">{s.covering_employee ? employeeName(s.covering_employee) : "Unassigned"}</td>
+                  <td className="px-4 py-3 text-white/60">{s.covering_employee ? employeeName(s.covering_employee) : (isAr ? "غير معيّن" : "Unassigned")}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
                       <button onClick={() => decideSwap(s.id, "approve")} className="rounded-md bg-green-500/15 p-1.5 text-green-400 hover:bg-green-500/25"><Check size={14} /></button>

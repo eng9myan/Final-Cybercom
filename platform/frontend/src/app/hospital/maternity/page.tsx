@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, Fragment } from "react";
 import { Baby } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 interface Pregnancy {
   id: string;
@@ -63,7 +64,9 @@ const STAGE_LABELS: Record<number, string> = { 1: "Stage 1 (Early)", 2: "Stage 2
 
 export default function MaternityPage() {
   const { session, isAuthenticated } = useAuth();
-  const [lang, setLang] = useState<"en" | "ar">("en");
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
   const [pregnancies, setPregnancies] = useState<Pregnancy[] | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [prenatalEncounters, setPrenatalEncounters] = useState<PrenatalEncounter[]>([]);

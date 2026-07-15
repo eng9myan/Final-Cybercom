@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 interface ModuleSummary {
   patients_total: number;
@@ -108,7 +109,9 @@ function KpiTile({
 
 export default function HospitalPortal() {
   const { session, isAuthenticated } = useAuth();
-  const [lang, setLang] = useState<"en" | "ar">("en");
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
   const [metrics, setMetrics] = useState<HospitalMetrics | null>(null);
   const [trend, setTrend] = useState<TrendPoint[] | null>(null);
   const [moduleSummary, setModuleSummary] = useState<ModuleSummary | null>(null);

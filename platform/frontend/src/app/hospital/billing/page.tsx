@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, Fragment } from "react";
 import { Receipt, Search } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 type BillingStatus = "open" | "coded" | "reviewed" | "billed" | "paid" | "partial" | "denied" | "written_off";
 const STATUS_ORDER: BillingStatus[] = ["open", "coded", "reviewed", "billed"];
@@ -56,9 +57,17 @@ const STATUS_COLOR: Record<string, string> = {
   open: "#ef4444", coded: "#f59e0b", reviewed: "#f59e0b", billed: "#3b82f6",
   paid: "#22c55e", partial: "#f59e0b", denied: "#ef4444", written_off: "#6b7280",
 };
+const STATUS_LABEL_AR: Record<string, string> = {
+  all: "الكل", open: "مفتوح", coded: "تم الترميز", reviewed: "تمت المراجعة", billed: "تم إصدار الفاتورة",
+  paid: "مدفوع", partial: "جزئي", denied: "مرفوض", written_off: "مشطوب",
+};
 
 export default function HospitalBilling() {
   const { session, isAuthenticated } = useAuth();
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
+  const isAr = lang === "ar";
   const [encounters, setEncounters] = useState<EncounterBilling[] | null>(null);
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [patientNames, setPatientNames] = useState<Map<string, string>>(new Map());
@@ -94,9 +103,9 @@ export default function HospitalBilling() {
       setInvoices(invoicesPage.results);
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load billing data."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحميل بيانات الفوترة." : "Failed to load billing data."));
     }
-  }, [session]);
+  }, [session, isAr]);
 
   useEffect(() => {
     void loadData();
@@ -115,7 +124,7 @@ export default function HospitalBilling() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || "Failed to update billing status.");
+      setFetchError(detail || (isAr ? "فشل تحديث حالة الفوترة." : "Failed to update billing status."));
     }
   }
 
@@ -133,7 +142,7 @@ export default function HospitalBilling() {
       setIcdResults(Array.isArray(res) ? res : res.results ?? []);
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setIcdError(detail || (err instanceof Error ? err.message : "ICD-11 search failed."));
+      setIcdError(detail || (err instanceof Error ? err.message : isAr ? "فشل البحث في ICD-11." : "ICD-11 search failed."));
       setIcdResults(null);
     } finally {
       setIcdSearching(false);
@@ -154,7 +163,7 @@ export default function HospitalBilling() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || "Failed to assign diagnosis code.");
+      setFetchError(detail || (isAr ? "فشل تعيين رمز التشخيص." : "Failed to assign diagnosis code."));
     }
   }
 
@@ -164,13 +173,13 @@ export default function HospitalBilling() {
   if (fetchError) {
     return (
       <div role="alert" className="mx-auto mt-16 max-w-lg text-center">
-        <h1 className="text-xl font-bold text-red-400">Unable to load billing data</h1>
+        <h1 className="text-xl font-bold text-red-400">{isAr ? "تعذر تحميل بيانات الفوترة" : "Unable to load billing data"}</h1>
         <p className="mt-2 text-ink/50">{fetchError}</p>
       </div>
     );
   }
   if (encounters === null || invoices === null) {
-    return <div className="mt-16 text-center text-ink/50">Loading live billing data...</div>;
+    return <div className="mt-16 text-center text-ink/50">{isAr ? "جارٍ تحميل بيانات الفوترة المباشرة..." : "Loading live billing data..."}</div>;
   }
 
   const outstandingInvoices = invoices.filter(i => ["issued", "sent", "partial", "overdue"].includes(i.status));
@@ -180,18 +189,23 @@ export default function HospitalBilling() {
   const filtered = encounters.filter(e => statusFilter === "all" || e.billing_status === statusFilter);
 
   return (
-    <div className="mx-auto max-w-6xl">
-      <header className="mb-6">
-        <h1 className="flex items-center gap-2 font-heading text-2xl font-bold"><Receipt size={22} /> Billing & Invoicing</h1>
-        <p className="mt-1 text-sm text-ink/50">Live encounter billing and invoices for this tenant</p>
+    <div dir={isAr ? "rtl" : "ltr"} className="mx-auto max-w-6xl">
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 font-heading text-2xl font-bold"><Receipt size={22} /> {isAr ? "الفوترة والفواتير" : "Billing & Invoicing"}</h1>
+          <p className="mt-1 text-sm text-ink/50">{isAr ? "فوترة الزيارات والفواتير المباشرة لهذا المستأجر" : "Live encounter billing and invoices for this tenant"}</p>
+        </div>
+        <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+          {isAr ? "English" : "العربية"}
+        </button>
       </header>
 
       <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
         {[
-          { label: "Unbilled (open)", value: `SAR ${unbilledTotal.toLocaleString()}`, color: "#ef4444" },
-          { label: "Outstanding invoices", value: `SAR ${outstandingTotal.toLocaleString()}`, color: "#f59e0b" },
-          { label: "Collected (paid)", value: `SAR ${paidTotal.toLocaleString()}`, color: "#22c55e" },
-          { label: "Invoices", value: invoices.length, color: "#22D3EE" },
+          { label: isAr ? "غير مفوتر (مفتوح)" : "Unbilled (open)", value: `SAR ${unbilledTotal.toLocaleString()}`, color: "#ef4444" },
+          { label: isAr ? "فواتير مستحقة" : "Outstanding invoices", value: `SAR ${outstandingTotal.toLocaleString()}`, color: "#f59e0b" },
+          { label: isAr ? "تم تحصيله (مدفوع)" : "Collected (paid)", value: `SAR ${paidTotal.toLocaleString()}`, color: "#22c55e" },
+          { label: isAr ? "الفواتير" : "Invoices", value: invoices.length, color: "#22D3EE" },
         ].map(c => (
           <div key={c.label} className="cy-card p-4">
             <p className="text-xs text-ink/50">{c.label}</p>
@@ -207,7 +221,7 @@ export default function HospitalBilling() {
             onClick={() => setStatusFilter(s)}
             className={`rounded-lg border px-3 py-1.5 text-sm capitalize ${statusFilter === s ? "border-brand-400 bg-brand-500/15 text-brand-200 font-semibold" : "border-ink/10 bg-surface-overlay text-ink/70"}`}
           >
-            {s} ({encounters.filter(e => s === "all" || e.billing_status === s).length})
+            {isAr ? STATUS_LABEL_AR[s] : s} ({encounters.filter(e => s === "all" || e.billing_status === s).length})
           </button>
         ))}
       </div>
@@ -217,14 +231,17 @@ export default function HospitalBilling() {
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-ink/10 bg-ink/5">
-                {["Patient", "Date", "Type", "Diagnosis (ICD-11)", "Charges (SAR)", "Balance Due", "Status", "Action"].map(h => (
-                  <th key={h} className="px-4 py-3 text-left font-semibold text-ink/50">{h}</th>
+                {(isAr
+                  ? ["المريض", "التاريخ", "النوع", "التشخيص (ICD-11)", "الرسوم (ريال)", "الرصيد المستحق", "الحالة", "إجراء"]
+                  : ["Patient", "Date", "Type", "Diagnosis (ICD-11)", "Charges (SAR)", "Balance Due", "Status", "Action"]
+                ).map(h => (
+                  <th key={h} className={`px-4 py-3 font-semibold text-ink/50 ${isAr ? "text-right" : "text-left"}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-6 text-center text-ink/50">No encounter billing records for this filter.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-6 text-center text-ink/50">{isAr ? "لا توجد سجلات فوترة لهذا الفلتر." : "No encounter billing records for this filter."}</td></tr>
               )}
               {filtered.map(enc => {
                 const statusIdx = STATUS_ORDER.indexOf(enc.billing_status);
@@ -233,7 +250,7 @@ export default function HospitalBilling() {
                 return (
                   <Fragment key={enc.id}>
                     <tr className="border-b border-ink/5">
-                      <td className="px-4 py-3 font-medium">{patientNames.get(enc.patient_account) || "Unknown patient"}</td>
+                      <td className="px-4 py-3 font-medium">{patientNames.get(enc.patient_account) || (isAr ? "مريض غير معروف" : "Unknown patient")}</td>
                       <td className="px-4 py-3 text-ink/60">{enc.encounter_date}</td>
                       <td className="px-4 py-3 capitalize text-ink/60">{enc.encounter_type}</td>
                       <td className="px-4 py-3">
@@ -241,20 +258,20 @@ export default function HospitalBilling() {
                           onClick={() => { setCodingEncounterId(isCoding ? null : enc.id); setIcdResults(null); setIcdQuery(""); setIcdError(null); }}
                           className="flex items-center gap-1.5 font-mono text-brand-300 hover:underline"
                         >
-                          <Search size={12} /> {enc.icd11_primary_diagnosis || "Set diagnosis…"}
+                          <Search size={12} /> {enc.icd11_primary_diagnosis || (isAr ? "تحديد التشخيص…" : "Set diagnosis…")}
                         </button>
                       </td>
                       <td className="px-4 py-3 font-semibold">{parseFloat(enc.total_charges).toLocaleString()}</td>
                       <td className="px-4 py-3">{parseFloat(enc.balance_due).toLocaleString()}</td>
                       <td className="px-4 py-3">
                         <span className="rounded-full px-2 py-0.5 text-xs font-semibold capitalize" style={{ background: `${STATUS_COLOR[enc.billing_status]}22`, color: STATUS_COLOR[enc.billing_status] }}>
-                          {enc.billing_status.replace("_", " ")}
+                          {isAr ? STATUS_LABEL_AR[enc.billing_status] : enc.billing_status.replace("_", " ")}
                         </span>
                       </td>
                       <td className="px-4 py-3">
                         {nextStatus && (
                           <button onClick={() => advanceStatus(enc)} className="rounded-md bg-brand-500 px-2 py-1 text-xs font-semibold capitalize hover:bg-brand-600">
-                            Mark {nextStatus}
+                            {isAr ? `تعليم كـ ${STATUS_LABEL_AR[nextStatus]}` : `Mark ${nextStatus}`}
                           </button>
                         )}
                       </td>
@@ -267,17 +284,17 @@ export default function HospitalBilling() {
                               value={icdQuery}
                               onChange={e => setIcdQuery(e.target.value)}
                               onKeyDown={e => e.key === "Enter" && searchICD11()}
-                              placeholder="Search ICD-11 (e.g. type 2 diabetes, pneumonia)…"
+                              placeholder={isAr ? "بحث ICD-11 (مثال: السكري النوع 2، الالتهاب الرئوي)…" : "Search ICD-11 (e.g. type 2 diabetes, pneumonia)…"}
                               className="w-full max-w-md rounded-lg border border-ink/10 bg-surface px-3 py-2 text-sm"
                             />
                             <button onClick={searchICD11} disabled={icdSearching || !icdQuery.trim()} className="cy-btn cy-btn-primary !min-h-0 !py-2 !px-4 text-sm disabled:opacity-50">
-                              {icdSearching ? "…" : "Search"}
+                              {icdSearching ? "…" : (isAr ? "بحث" : "Search")}
                             </button>
                           </div>
                           {icdError && <p className="mt-2 text-xs text-red-400">{icdError}</p>}
                           {icdResults && (
                             <div className="mt-3 grid max-w-lg gap-1.5">
-                              {icdResults.length === 0 && <p className="text-xs text-ink/40">No ICD-11 concepts matched.</p>}
+                              {icdResults.length === 0 && <p className="text-xs text-ink/40">{isAr ? "لم يتم العثور على مفاهيم ICD-11 مطابقة." : "No ICD-11 concepts matched."}</p>}
                               {icdResults.map(r => (
                                 <button
                                   key={r.code}

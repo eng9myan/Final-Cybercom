@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, Fragment } from "react";
 import { Pill } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 type MarStatus = "scheduled" | "given" | "held" | "refused" | "missed" | "late";
 
@@ -35,9 +36,16 @@ const STATUS_COLOR: Record<MarStatus, string> = {
   scheduled: "#3b82f6", given: "#22c55e", held: "#f59e0b",
   refused: "#ef4444", missed: "#6b7280", late: "#f97316",
 };
+const STATUS_LABEL_AR: Record<MarStatus, string> = {
+  scheduled: "مجدول", given: "تم إعطاؤه", held: "معلّق", refused: "مرفوض", missed: "فائت", late: "متأخر",
+};
 
 export default function EMARPage() {
   const { session, isAuthenticated } = useAuth();
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
+  const isAr = lang === "ar";
   const [orders, setOrders] = useState<MedicationOrder[]>([]);
   const [marRecords, setMarRecords] = useState<MarRecord[] | null>(null);
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -67,9 +75,9 @@ export default function EMARPage() {
       setPatients(patientPage.results);
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load eMAR data."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحميل بيانات سجل إعطاء الأدوية." : "Failed to load eMAR data."));
     }
-  }, [session]);
+  }, [session, isAr]);
 
   useEffect(() => { void loadData(); }, [loadData]);
 
@@ -94,7 +102,8 @@ export default function EMARPage() {
       void loadData();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setActionError(detail || `Failed to ${action} dose.`);
+      const actionLabelAr = action === "administer" ? "إعطاء" : action === "hold" ? "تعليق" : "رفض";
+      setActionError(detail || (isAr ? `فشل ${actionLabelAr} الجرعة.` : `Failed to ${action} dose.`));
     } finally {
       setSubmittingId(null);
     }
@@ -106,13 +115,13 @@ export default function EMARPage() {
   if (fetchError) {
     return (
       <div role="alert" className="mx-auto mt-16 max-w-lg text-center">
-        <h1 className="text-xl font-bold text-red-400">Unable to load eMAR data</h1>
+        <h1 className="text-xl font-bold text-red-400">{isAr ? "تعذر تحميل بيانات سجل إعطاء الأدوية" : "Unable to load eMAR data"}</h1>
         <p className="mt-2 text-white/50">{fetchError}</p>
       </div>
     );
   }
   if (marRecords === null) {
-    return <div className="mt-16 text-center text-white/50">Loading live eMAR data...</div>;
+    return <div className="mt-16 text-center text-white/50">{isAr ? "جارٍ تحميل بيانات سجل إعطاء الأدوية المباشرة..." : "Loading live eMAR data..."}</div>;
   }
 
   const orderById = (id: string) => orders.find(o => o.id === id);
@@ -122,24 +131,29 @@ export default function EMARPage() {
   const heldOrRefusedCount = marRecords.filter(m => m.status === "held" || m.status === "refused").length;
 
   return (
-    <div className="mx-auto max-w-6xl">
-      <header className="mb-6">
-        <h1 className="flex items-center gap-2 text-2xl font-bold"><Pill size={22} /> Medication Administration Record</h1>
-        <p className="mt-1 text-sm text-white/50">Live eMAR for this tenant -- bedside barcode-verified dosing</p>
+    <div dir={isAr ? "rtl" : "ltr"} className="mx-auto max-w-6xl">
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold"><Pill size={22} /> {isAr ? "سجل إعطاء الأدوية الإلكتروني" : "Medication Administration Record"}</h1>
+          <p className="mt-1 text-sm text-white/50">{isAr ? "سجل إعطاء الأدوية المباشر لهذا المستأجر -- جرعات موثقة بالباركود عند السرير" : "Live eMAR for this tenant -- bedside barcode-verified dosing"}</p>
+        </div>
+        <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+          {isAr ? "English" : "العربية"}
+        </button>
       </header>
 
       <div className="mb-6 grid grid-cols-3 gap-4">
         <div className="rounded-xl border border-white/10 bg-surface-raised p-4 text-center">
           <p className="text-2xl font-bold text-blue-400">{dueCount}</p>
-          <p className="mt-1 text-xs text-white/50">Due</p>
+          <p className="mt-1 text-xs text-white/50">{isAr ? "مستحق" : "Due"}</p>
         </div>
         <div className="rounded-xl border border-white/10 bg-surface-raised p-4 text-center">
           <p className="text-2xl font-bold text-green-400">{givenCount}</p>
-          <p className="mt-1 text-xs text-white/50">Given</p>
+          <p className="mt-1 text-xs text-white/50">{isAr ? "تم إعطاؤه" : "Given"}</p>
         </div>
         <div className="rounded-xl border border-white/10 bg-surface-raised p-4 text-center">
           <p className="text-2xl font-bold text-amber-400">{heldOrRefusedCount}</p>
-          <p className="mt-1 text-xs text-white/50">Held / Refused</p>
+          <p className="mt-1 text-xs text-white/50">{isAr ? "معلّق / مرفوض" : "Held / Refused"}</p>
         </div>
       </div>
 
@@ -152,14 +166,14 @@ export default function EMARPage() {
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                {["Patient", "Drug", "Dose", "Route", "Scheduled", "Status", "Barcode", "Actions"].map(h => (
-                  <th key={h} className="px-4 py-3 text-left font-semibold text-white/50">{h}</th>
+                {(isAr ? ["المريض", "الدواء", "الجرعة", "الطريق", "المجدول", "الحالة", "الباركود", "إجراءات"] : ["Patient", "Drug", "Dose", "Route", "Scheduled", "Status", "Barcode", "Actions"]).map(h => (
+                  <th key={h} className={`px-4 py-3 font-semibold text-white/50 ${isAr ? "text-right" : "text-left"}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {marRecords.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-6 text-center text-white/50">No medication administration records scheduled for this tenant yet.</td></tr>
+                <tr><td colSpan={8} className="px-4 py-6 text-center text-white/50">{isAr ? "لا توجد سجلات إعطاء أدوية مجدولة لهذا المستأجر بعد." : "No medication administration records scheduled for this tenant yet."}</td></tr>
               )}
               {marRecords.map(mar => {
                 const order = orderById(mar.medication_order);
@@ -168,18 +182,18 @@ export default function EMARPage() {
                 return (
                   <Fragment key={mar.id}>
                     <tr className="border-b border-white/5">
-                      <td className="px-4 py-3 font-medium">{patient ? `${patient.first_name} ${patient.last_name} (${patient.mrn})` : "Unknown patient"}</td>
+                      <td className="px-4 py-3 font-medium">{patient ? `${patient.first_name} ${patient.last_name} (${patient.mrn})` : (isAr ? "مريض غير معروف" : "Unknown patient")}</td>
                       <td className="px-4 py-3">{order?.drug_name ?? "—"}</td>
                       <td className="px-4 py-3 text-white/60">{mar.dose_given || (order ? `${order.dose} ${order.dose_unit}` : "—")}</td>
                       <td className="px-4 py-3 text-white/60">{order?.route ?? "—"}</td>
                       <td className="px-4 py-3 text-white/60">{new Date(mar.scheduled_at).toLocaleString()}</td>
                       <td className="px-4 py-3">
-                        <span className="rounded-full px-2 py-0.5 text-xs font-semibold capitalize" style={{ background: `${STATUS_COLOR[mar.status]}22`, color: STATUS_COLOR[mar.status] }}>{mar.status}</span>
+                        <span className="rounded-full px-2 py-0.5 text-xs font-semibold capitalize" style={{ background: `${STATUS_COLOR[mar.status]}22`, color: STATUS_COLOR[mar.status] }}>{isAr ? STATUS_LABEL_AR[mar.status] : mar.status}</span>
                       </td>
                       <td className="px-4 py-3">
                         {mar.administered_at ? (
                           <span className={mar.barcode_match_verified ? "text-green-400" : "text-amber-400"}>
-                            {mar.barcode_match_verified ? "Verified" : "Override"}
+                            {mar.barcode_match_verified ? (isAr ? "تم التحقق" : "Verified") : (isAr ? "تجاوز" : "Override")}
                           </span>
                         ) : "—"}
                       </td>
@@ -191,21 +205,21 @@ export default function EMARPage() {
                               onClick={() => { setGivePanelId(givePanelId === mar.id ? null : mar.id); setHoldPanelId(null); setRefusePanelId(null); }}
                               className="rounded-md bg-green-500/15 px-2 py-1 text-xs font-semibold text-green-400 hover:bg-green-500/25 disabled:opacity-40"
                             >
-                              Give
+                              {isAr ? "إعطاء" : "Give"}
                             </button>
                             <button
                               disabled={busy}
                               onClick={() => { setHoldPanelId(holdPanelId === mar.id ? null : mar.id); setGivePanelId(null); setRefusePanelId(null); }}
                               className="rounded-md bg-amber-500/15 px-2 py-1 text-xs font-semibold text-amber-400 hover:bg-amber-500/25 disabled:opacity-40"
                             >
-                              Hold
+                              {isAr ? "تعليق" : "Hold"}
                             </button>
                             <button
                               disabled={busy}
                               onClick={() => { setRefusePanelId(refusePanelId === mar.id ? null : mar.id); setGivePanelId(null); setHoldPanelId(null); }}
                               className="rounded-md bg-red-500/15 px-2 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/25 disabled:opacity-40"
                             >
-                              Refuse
+                              {isAr ? "رفض" : "Refuse"}
                             </button>
                           </div>
                         )}
@@ -215,10 +229,10 @@ export default function EMARPage() {
                       <tr className="border-b border-white/5 bg-white/5">
                         <td colSpan={8} className="px-4 py-3">
                           <div className="flex flex-wrap items-end gap-3">
-                            <label className="text-xs text-white/50">Patient wristband barcode (MRN)
+                            <label className="text-xs text-white/50">{isAr ? "باركود سوار المريض (رقم الملف)" : "Patient wristband barcode (MRN)"}
                               <input value={givePatientBarcode} onChange={e => setGivePatientBarcode(e.target.value)} placeholder={patient?.mrn} className="mt-1 block w-56 rounded-lg border border-white/10 bg-surface-overlay px-3 py-1.5 text-sm focus:border-brand-400 focus:outline-none" />
                             </label>
-                            <label className="text-xs text-white/50">Drug package barcode (drug code)
+                            <label className="text-xs text-white/50">{isAr ? "باركود عبوة الدواء (رمز الدواء)" : "Drug package barcode (drug code)"}
                               <input value={giveDrugBarcode} onChange={e => setGiveDrugBarcode(e.target.value)} className="mt-1 block w-56 rounded-lg border border-white/10 bg-surface-overlay px-3 py-1.5 text-sm focus:border-brand-400 focus:outline-none" />
                             </label>
                             <button
@@ -226,7 +240,7 @@ export default function EMARPage() {
                               onClick={() => void actOnDose(mar, "administer", { patient_barcode_scanned: givePatientBarcode, drug_barcode_scanned: giveDrugBarcode })}
                               className="rounded-lg bg-green-500 px-4 py-1.5 text-sm font-semibold text-black hover:bg-green-600 disabled:opacity-40"
                             >
-                              {busy ? "Confirming..." : "Confirm Administration"}
+                              {busy ? (isAr ? "جارٍ التأكيد..." : "Confirming...") : (isAr ? "تأكيد الإعطاء" : "Confirm Administration")}
                             </button>
                           </div>
                         </td>
@@ -236,11 +250,11 @@ export default function EMARPage() {
                       <tr className="border-b border-white/5 bg-white/5">
                         <td colSpan={8} className="px-4 py-3">
                           <div className="flex flex-wrap items-end gap-3">
-                            <label className="text-xs text-white/50">Reason for holding this dose
+                            <label className="text-xs text-white/50">{isAr ? "سبب تعليق هذه الجرعة" : "Reason for holding this dose"}
                               <input value={holdReason} onChange={e => setHoldReason(e.target.value)} className="mt-1 block w-72 rounded-lg border border-white/10 bg-surface-overlay px-3 py-1.5 text-sm focus:border-brand-400 focus:outline-none" />
                             </label>
                             <button disabled={busy || !holdReason} onClick={() => void actOnDose(mar, "hold", { hold_reason: holdReason })} className="rounded-lg bg-amber-500 px-4 py-1.5 text-sm font-semibold text-black hover:bg-amber-600 disabled:opacity-40">
-                              {busy ? "Saving..." : "Confirm Hold"}
+                              {busy ? (isAr ? "جارٍ الحفظ..." : "Saving...") : (isAr ? "تأكيد التعليق" : "Confirm Hold")}
                             </button>
                           </div>
                         </td>
@@ -250,11 +264,11 @@ export default function EMARPage() {
                       <tr className="border-b border-white/5 bg-white/5">
                         <td colSpan={8} className="px-4 py-3">
                           <div className="flex flex-wrap items-end gap-3">
-                            <label className="text-xs text-white/50">Reason patient refused
+                            <label className="text-xs text-white/50">{isAr ? "سبب رفض المريض" : "Reason patient refused"}
                               <input value={refuseReason} onChange={e => setRefuseReason(e.target.value)} className="mt-1 block w-72 rounded-lg border border-white/10 bg-surface-overlay px-3 py-1.5 text-sm focus:border-brand-400 focus:outline-none" />
                             </label>
                             <button disabled={busy || !refuseReason} onClick={() => void actOnDose(mar, "refuse", { refused_reason: refuseReason })} className="rounded-lg bg-red-500 px-4 py-1.5 text-sm font-semibold hover:bg-red-600 disabled:opacity-40">
-                              {busy ? "Saving..." : "Confirm Refusal"}
+                              {busy ? (isAr ? "جارٍ الحفظ..." : "Saving...") : (isAr ? "تأكيد الرفض" : "Confirm Refusal")}
                             </button>
                           </div>
                         </td>

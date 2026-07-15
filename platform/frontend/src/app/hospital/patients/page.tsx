@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { UserPlus, Search, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 interface Patient {
   id: string;
@@ -26,6 +27,10 @@ const emptyForm = { first_name: "", last_name: "", dob: "", gender: "unknown", n
 
 export default function PatientRegistration() {
   const { session, isAuthenticated } = useAuth();
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
+  const isAr = lang === "ar";
   const [patients, setPatients] = useState<Patient[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -47,11 +52,11 @@ export default function PatientRegistration() {
       setPatients(page.results);
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load patients."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحميل المرضى." : "Failed to load patients."));
     } finally {
       setLoading(false);
     }
-  }, [session]);
+  }, [session, isAr]);
 
   useEffect(() => {
     void loadPatients();
@@ -80,7 +85,7 @@ export default function PatientRegistration() {
       void loadPatients();
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFormError(detail || (err instanceof Error ? err.message : "Failed to register patient."));
+      setFormError(detail || (err instanceof Error ? err.message : isAr ? "فشل تسجيل المريض." : "Failed to register patient."));
     } finally {
       setSubmitting(false);
     }
@@ -98,7 +103,7 @@ export default function PatientRegistration() {
   if (fetchError) {
     return (
       <div role="alert" className="mx-auto mt-16 max-w-lg text-center">
-        <h1 className="text-xl font-bold text-red-400">Unable to load patients</h1>
+        <h1 className="text-xl font-bold text-red-400">{isAr ? "تعذر تحميل المرضى" : "Unable to load patients"}</h1>
         <p className="mt-2 text-white/50">{fetchError}</p>
       </div>
     );
@@ -110,58 +115,63 @@ export default function PatientRegistration() {
   });
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div dir={isAr ? "rtl" : "ltr"} className="mx-auto max-w-6xl">
       <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Patient Registration</h1>
-          <p className="mt-1 text-sm text-white/50">Real patient identity records for this tenant</p>
+          <h1 className="text-2xl font-bold">{isAr ? "تسجيل المرضى" : "Patient Registration"}</h1>
+          <p className="mt-1 text-sm text-white/50">{isAr ? "سجلات هوية المرضى الفعلية لهذا المستأجر" : "Real patient identity records for this tenant"}</p>
         </div>
-        <button
-          onClick={() => setShowForm(true)}
-          className="flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold hover:bg-brand-600"
-        >
-          <UserPlus size={16} /> Register Patient
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowForm(true)}
+            className="flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold hover:bg-brand-600"
+          >
+            <UserPlus size={16} /> {isAr ? "تسجيل مريض" : "Register Patient"}
+          </button>
+          <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+            {isAr ? "English" : "العربية"}
+          </button>
+        </div>
       </header>
 
       <div className="relative mb-4 max-w-sm">
-        <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/40" />
+        <Search size={16} className={`pointer-events-none absolute top-1/2 -translate-y-1/2 text-white/40 ${isAr ? "right-3" : "left-3"}`} />
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search by name or MRN..."
-          className="w-full rounded-lg border border-white/10 bg-surface-overlay py-2 pl-9 pr-3 text-sm placeholder:text-white/40 focus:border-brand-400 focus:outline-none"
+          placeholder={isAr ? "البحث بالاسم أو رقم الملف الطبي..." : "Search by name or MRN..."}
+          className={`w-full rounded-lg border border-white/10 bg-surface-overlay py-2 text-sm placeholder:text-white/40 focus:border-brand-400 focus:outline-none ${isAr ? "pr-9 pl-3" : "pl-9 pr-3"}`}
         />
       </div>
 
       {showForm && (
         <div className="mb-6 rounded-xl border border-white/10 bg-surface-raised p-5">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-semibold">New Patient Registration</h2>
+            <h2 className="font-semibold">{isAr ? "تسجيل مريض جديد" : "New Patient Registration"}</h2>
             <button onClick={() => setShowForm(false)} className="text-white/50 hover:text-white">
               <X size={18} />
             </button>
           </div>
           {formError && <p className="mb-3 text-sm text-red-400">{formError}</p>}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <input placeholder="First name" value={form.first_name} onChange={e => setForm({ ...form, first_name: e.target.value })} className="rounded-lg border border-white/10 bg-surface-overlay px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
-            <input placeholder="Last name" value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} className="rounded-lg border border-white/10 bg-surface-overlay px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+            <input placeholder={isAr ? "الاسم الأول" : "First name"} value={form.first_name} onChange={e => setForm({ ...form, first_name: e.target.value })} className="rounded-lg border border-white/10 bg-surface-overlay px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+            <input placeholder={isAr ? "اسم العائلة" : "Last name"} value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} className="rounded-lg border border-white/10 bg-surface-overlay px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
             <input type="date" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} className="rounded-lg border border-white/10 bg-surface-overlay px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
             <select value={form.gender} onChange={e => setForm({ ...form, gender: e.target.value })} className="rounded-lg border border-white/10 bg-surface-overlay px-3 py-2 text-sm focus:border-brand-400 focus:outline-none">
-              <option value="unknown">Unknown</option>
-              <option value="male">Male</option>
-              <option value="female">Female</option>
-              <option value="other">Other</option>
+              <option value="unknown">{isAr ? "غير معروف" : "Unknown"}</option>
+              <option value="male">{isAr ? "ذكر" : "Male"}</option>
+              <option value="female">{isAr ? "أنثى" : "Female"}</option>
+              <option value="other">{isAr ? "آخر" : "Other"}</option>
             </select>
-            <input placeholder="National ID (optional)" value={form.national_id} onChange={e => setForm({ ...form, national_id: e.target.value })} className="rounded-lg border border-white/10 bg-surface-overlay px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
-            <input placeholder="Passport number (optional)" value={form.passport_number} onChange={e => setForm({ ...form, passport_number: e.target.value })} className="rounded-lg border border-white/10 bg-surface-overlay px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+            <input placeholder={isAr ? "الرقم الوطني (اختياري)" : "National ID (optional)"} value={form.national_id} onChange={e => setForm({ ...form, national_id: e.target.value })} className="rounded-lg border border-white/10 bg-surface-overlay px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
+            <input placeholder={isAr ? "رقم جواز السفر (اختياري)" : "Passport number (optional)"} value={form.passport_number} onChange={e => setForm({ ...form, passport_number: e.target.value })} className="rounded-lg border border-white/10 bg-surface-overlay px-3 py-2 text-sm focus:border-brand-400 focus:outline-none" />
           </div>
           <button
             onClick={submitRegistration}
             disabled={submitting || !form.first_name || !form.last_name || !form.dob}
             className="mt-4 rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold hover:bg-brand-600 disabled:opacity-40"
           >
-            {submitting ? "Registering..." : "Register Patient"}
+            {submitting ? (isAr ? "جارٍ التسجيل..." : "Registering...") : (isAr ? "تسجيل المريض" : "Register Patient")}
           </button>
         </div>
       )}
@@ -171,17 +181,17 @@ export default function PatientRegistration() {
           <table className="w-full border-collapse text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-white/5">
-                {["MRN", "Name", "DOB", "Gender", "Status"].map(h => (
-                  <th key={h} className="px-4 py-3 text-left font-semibold text-white/50">{h}</th>
+                {(isAr ? ["رقم الملف", "الاسم", "تاريخ الميلاد", "الجنس", "الحالة"] : ["MRN", "Name", "DOB", "Gender", "Status"]).map(h => (
+                  <th key={h} className={`px-4 py-3 font-semibold text-white/50 ${isAr ? "text-right" : "text-left"}`}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-white/50">Loading live patient data...</td></tr>
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-white/50">{isAr ? "جارٍ تحميل بيانات المرضى المباشرة..." : "Loading live patient data..."}</td></tr>
               )}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-6 text-center text-white/50">No patients registered for this tenant yet — register the first patient.</td></tr>
+                <tr><td colSpan={5} className="px-4 py-6 text-center text-white/50">{isAr ? "لا يوجد مرضى مسجلون لهذا المستأجر بعد — سجّل المريض الأول." : "No patients registered for this tenant yet — register the first patient."}</td></tr>
               )}
               {filtered.map(p => (
                 <tr key={p.id} className="border-b border-white/5">
@@ -191,7 +201,7 @@ export default function PatientRegistration() {
                   <td className="px-4 py-3 capitalize text-white/60">{p.gender}</td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${p.is_active ? "bg-green-500/15 text-green-400" : "bg-white/10 text-white/50"}`}>
-                      {p.is_active ? "Active" : "Inactive"}
+                      {p.is_active ? (isAr ? "نشط" : "Active") : (isAr ? "غير نشط" : "Inactive")}
                     </span>
                   </td>
                 </tr>

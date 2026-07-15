@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, Fragment } from "react";
 import { HeartPulse } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 interface ICUStay {
   id: string;
@@ -39,7 +40,9 @@ interface Paginated<T> { count: number; results: T[]; }
 
 export default function ICUPage() {
   const { session, isAuthenticated } = useAuth();
-  const [lang, setLang] = useState<"en" | "ar">("en");
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
   const [stays, setStays] = useState<ICUStay[] | null>(null);
   const [hospitalStays, setHospitalStays] = useState<HospitalStay[]>([]);
   const [admissions, setAdmissions] = useState<Admission[]>([]);

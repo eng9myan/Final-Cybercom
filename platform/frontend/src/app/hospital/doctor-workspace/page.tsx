@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Stethoscope, ClipboardCheck, FlaskConical, FileText, Users, ArrowRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 interface ClinicalTask {
   id: string;
@@ -20,15 +21,19 @@ interface Paginated<T> {
 }
 
 const DEEP_LINKS = [
-  { href: "/provider-portal/patients", label: "My Patients", icon: Users, description: "Patient assignments and census" },
-  { href: "/provider-portal/tasks", label: "Clinical Tasks", icon: ClipboardCheck, description: "Open tasks, escalations, follow-ups" },
-  { href: "/provider-portal/orders", label: "Orders", icon: FileText, description: "Active clinical orders" },
-  { href: "/provider-portal/results", label: "Results", icon: FlaskConical, description: "Lab and imaging results review" },
-  { href: "/provider-portal/notes", label: "Clinical Notes", icon: FileText, description: "SOAP notes with ICD-11 diagnosis coding" },
+  { href: "/provider-portal/patients", label_en: "My Patients", label_ar: "مرضاي", icon: Users, desc_en: "Patient assignments and census", desc_ar: "توزيع المرضى والإحصاء" },
+  { href: "/provider-portal/tasks", label_en: "Clinical Tasks", label_ar: "المهام السريرية", icon: ClipboardCheck, desc_en: "Open tasks, escalations, follow-ups", desc_ar: "المهام المفتوحة والتصعيدات والمتابعات" },
+  { href: "/provider-portal/orders", label_en: "Orders", label_ar: "الطلبات", icon: FileText, desc_en: "Active clinical orders", desc_ar: "الطلبات السريرية النشطة" },
+  { href: "/provider-portal/results", label_en: "Results", label_ar: "النتائج", icon: FlaskConical, desc_en: "Lab and imaging results review", desc_ar: "مراجعة نتائج المختبر والأشعة" },
+  { href: "/provider-portal/notes", label_en: "Clinical Notes", label_ar: "الملاحظات السريرية", icon: FileText, desc_en: "SOAP notes with ICD-11 diagnosis coding", desc_ar: "ملاحظات SOAP مع ترميز التشخيص ICD-11" },
 ];
 
 export default function DoctorWorkspace() {
   const { session, isAuthenticated } = useAuth();
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
+  const isAr = lang === "ar";
   const [tasks, setTasks] = useState<ClinicalTask[] | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -43,9 +48,9 @@ export default function DoctorWorkspace() {
       setTasks(page.results);
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load clinical tasks."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحميل ملخص المهام." : "Failed to load clinical tasks."));
     }
-  }, [session]);
+  }, [session, isAr]);
 
   useEffect(() => {
     void loadTasks();
@@ -63,24 +68,29 @@ export default function DoctorWorkspace() {
   const urgentTasks = openTasks.filter(t => ["urgent", "stat", "critical"].includes(t.priority));
 
   return (
-    <div className="mx-auto max-w-6xl">
-      <header className="mb-6">
-        <h1 className="flex items-center gap-2 text-2xl font-bold"><Stethoscope size={24} /> Doctor Workspace</h1>
-        <p className="mt-1 text-sm text-white/50">Tenant-wide clinical task status, with quick access into the full provider portal</p>
+    <div dir={isAr ? "rtl" : "ltr"} className="mx-auto max-w-6xl">
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold"><Stethoscope size={24} /> {isAr ? "مساحة عمل الطبيب" : "Doctor Workspace"}</h1>
+          <p className="mt-1 text-sm text-white/50">{isAr ? "حالة المهام السريرية على مستوى المستأجر، مع وصول سريع للبوابة الكاملة" : "Tenant-wide clinical task status, with quick access into the full provider portal"}</p>
+        </div>
+        <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+          {isAr ? "English" : "العربية"}
+        </button>
       </header>
 
       {fetchError && (
         <div role="alert" className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-          Unable to load task summary: {fetchError}
+          {isAr ? "تعذر تحميل ملخص المهام: " : "Unable to load task summary: "}{fetchError}
         </div>
       )}
 
       {!fetchError && (
         <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
           {[
-            { label: "Open Tasks", value: tasks === null ? "..." : openTasks.length, color: "#3b82f6" },
-            { label: "Urgent / STAT / Critical", value: tasks === null ? "..." : urgentTasks.length, color: "#ef4444" },
-            { label: "Total Tasks", value: tasks === null ? "..." : tasks.length, color: "#22D3EE" },
+            { label: isAr ? "المهام المفتوحة" : "Open Tasks", value: tasks === null ? "..." : openTasks.length, color: "#3b82f6" },
+            { label: isAr ? "عاجل / STAT / حرج" : "Urgent / STAT / Critical", value: tasks === null ? "..." : urgentTasks.length, color: "#ef4444" },
+            { label: isAr ? "إجمالي المهام" : "Total Tasks", value: tasks === null ? "..." : tasks.length, color: "#22D3EE" },
           ].map(m => (
             <div key={m.label} className="rounded-xl border border-white/10 bg-surface-raised p-5 text-center">
               <p className="text-3xl font-bold" style={{ color: m.color }}>{m.value}</p>
@@ -90,9 +100,9 @@ export default function DoctorWorkspace() {
         </div>
       )}
 
-      <h2 className="mb-3 text-lg font-semibold">Full Provider Portal</h2>
+      <h2 className="mb-3 text-lg font-semibold">{isAr ? "البوابة الكاملة لمقدم الرعاية" : "Full Provider Portal"}</h2>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {DEEP_LINKS.map(({ href, label, icon: Icon, description }) => (
+        {DEEP_LINKS.map(({ href, label_en, label_ar, icon: Icon, desc_en, desc_ar }) => (
           <Link
             key={href}
             href={href}
@@ -103,11 +113,11 @@ export default function DoctorWorkspace() {
                 <Icon size={20} />
               </div>
               <div>
-                <p className="font-semibold">{label}</p>
-                <p className="text-sm text-white/50">{description}</p>
+                <p className="font-semibold">{isAr ? label_ar : label_en}</p>
+                <p className="text-sm text-white/50">{isAr ? desc_ar : desc_en}</p>
               </div>
             </div>
-            <ArrowRight size={18} className="text-white/30" />
+            <ArrowRight size={18} className={`text-white/30 ${isAr ? "rotate-180" : ""}`} />
           </Link>
         ))}
       </div>

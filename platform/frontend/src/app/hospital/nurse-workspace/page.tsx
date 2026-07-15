@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { HeartHandshake, Pill, ClipboardList, ArrowLeftRight, Users, ArrowRight } from "lucide-react";
+import { HeartHandshake, Pill, ClipboardList, Users, ArrowRight } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/contexts/auth";
+import { usePreferences } from "@/contexts/preferences";
 
 interface NursingTask {
   id: string;
@@ -15,14 +16,18 @@ interface NursingTask {
 interface Paginated<T> { count: number; results: T[]; }
 
 const DEEP_LINKS = [
-  { href: "/hospital/nursing", label: "Nursing Dashboard", icon: HeartHandshake, description: "Ward assignments, care plans, assessments" },
-  { href: "/hospital/emar", label: "Medication Admin (eMAR)", icon: Pill, description: "Due/overdue medication administration" },
-  { href: "/hospital/adt", label: "Admissions (ADT)", icon: ClipboardList, description: "Admission, discharge, transfer status" },
-  { href: "/hospital/beds", label: "Bed Management", icon: Users, description: "Ward census and bed availability" },
+  { href: "/hospital/nursing", label_en: "Nursing Dashboard", label_ar: "لوحة التمريض", icon: HeartHandshake, desc_en: "Ward assignments, care plans, assessments", desc_ar: "توزيع الأجنحة وخطط الرعاية والتقييمات" },
+  { href: "/hospital/emar", label_en: "Medication Admin (eMAR)", label_ar: "إعطاء الأدوية (eMAR)", icon: Pill, desc_en: "Due/overdue medication administration", desc_ar: "الأدوية المستحقة والمتأخرة" },
+  { href: "/hospital/adt", label_en: "Admissions (ADT)", label_ar: "القبول (ADT)", icon: ClipboardList, desc_en: "Admission, discharge, transfer status", desc_ar: "حالة القبول والخروج والنقل" },
+  { href: "/hospital/beds", label_en: "Bed Management", label_ar: "إدارة الأسرّة", icon: Users, desc_en: "Ward census and bed availability", desc_ar: "إحصاء الجناح وتوفر الأسرّة" },
 ];
 
 export default function NurseWorkspace() {
   const { session, isAuthenticated } = useAuth();
+  const { locale: lang, setLocale: _setLangRaw } = usePreferences();
+  const setLang = (updater: "en" | "ar" | ((prev: "en" | "ar") => "en" | "ar")) =>
+    _setLangRaw(typeof updater === "function" ? (updater as (prev: "en" | "ar") => "en" | "ar")(lang) : updater);
+  const isAr = lang === "ar";
   const [tasks, setTasks] = useState<NursingTask[] | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -36,9 +41,9 @@ export default function NurseWorkspace() {
       setTasks(page.results);
     } catch (err) {
       const detail = (err as { detail?: string })?.detail;
-      setFetchError(detail || (err instanceof Error ? err.message : "Failed to load nursing tasks."));
+      setFetchError(detail || (err instanceof Error ? err.message : isAr ? "فشل تحميل مهام التمريض." : "Failed to load nursing tasks."));
     }
-  }, [session]);
+  }, [session, isAr]);
 
   useEffect(() => { void loadTasks(); }, [loadTasks]);
 
@@ -51,24 +56,29 @@ export default function NurseWorkspace() {
   const overdueTasks = pendingTasks.filter(t => new Date(t.scheduled_at).getTime() < now);
 
   return (
-    <div className="mx-auto max-w-6xl">
-      <header className="mb-6">
-        <h1 className="flex items-center gap-2 text-2xl font-bold"><HeartHandshake size={24} /> Nurse Workspace</h1>
-        <p className="mt-1 text-sm text-white/50">Care tasks due across your assigned wards, with quick access into full nursing tools</p>
+    <div dir={isAr ? "rtl" : "ltr"} className="mx-auto max-w-6xl">
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold"><HeartHandshake size={24} /> {isAr ? "مساحة عمل الممرض" : "Nurse Workspace"}</h1>
+          <p className="mt-1 text-sm text-white/50">{isAr ? "مهام الرعاية المستحقة في أجنحتك المخصصة، مع وصول سريع لأدوات التمريض الكاملة" : "Care tasks due across your assigned wards, with quick access into full nursing tools"}</p>
+        </div>
+        <button onClick={() => setLang(isAr ? "en" : "ar")} className="cy-btn cy-btn-ghost !min-h-0 !py-2 !px-4 text-sm">
+          {isAr ? "English" : "العربية"}
+        </button>
       </header>
 
       {fetchError && (
         <div role="alert" className="mb-6 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">
-          Unable to load task summary: {fetchError}
+          {isAr ? "تعذر تحميل ملخص المهام: " : "Unable to load task summary: "}{fetchError}
         </div>
       )}
 
       {!fetchError && (
         <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
           {[
-            { label: "Pending Tasks", value: tasks === null ? "..." : pendingTasks.length, color: "#3b82f6" },
-            { label: "Overdue", value: tasks === null ? "..." : overdueTasks.length, color: "#ef4444" },
-            { label: "Total Tasks Today", value: tasks === null ? "..." : tasks.length, color: "#22D3EE" },
+            { label: isAr ? "المهام المعلقة" : "Pending Tasks", value: tasks === null ? "..." : pendingTasks.length, color: "#3b82f6" },
+            { label: isAr ? "متأخرة" : "Overdue", value: tasks === null ? "..." : overdueTasks.length, color: "#ef4444" },
+            { label: isAr ? "إجمالي مهام اليوم" : "Total Tasks Today", value: tasks === null ? "..." : tasks.length, color: "#22D3EE" },
           ].map(m => (
             <div key={m.label} className="rounded-xl border border-white/10 bg-surface-raised p-5 text-center">
               <p className="text-3xl font-bold" style={{ color: m.color }}>{m.value}</p>
@@ -78,9 +88,9 @@ export default function NurseWorkspace() {
         </div>
       )}
 
-      <h2 className="mb-3 text-lg font-semibold">Nursing Tools</h2>
+      <h2 className="mb-3 text-lg font-semibold">{isAr ? "أدوات التمريض" : "Nursing Tools"}</h2>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        {DEEP_LINKS.map(({ href, label, icon: Icon, description }) => (
+        {DEEP_LINKS.map(({ href, label_en, label_ar, icon: Icon, desc_en, desc_ar }) => (
           <Link
             key={href}
             href={href}
@@ -91,11 +101,11 @@ export default function NurseWorkspace() {
                 <Icon size={20} />
               </div>
               <div>
-                <p className="font-semibold">{label}</p>
-                <p className="text-sm text-white/50">{description}</p>
+                <p className="font-semibold">{isAr ? label_ar : label_en}</p>
+                <p className="text-sm text-white/50">{isAr ? desc_ar : desc_en}</p>
               </div>
             </div>
-            <ArrowRight size={18} className="text-white/30" />
+            <ArrowRight size={18} className={`text-white/30 ${isAr ? "rotate-180" : ""}`} />
           </Link>
         ))}
       </div>
